@@ -1,6 +1,9 @@
+using api.Data;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.Configure<PersistenceOptions>(builder.Configuration.GetSection("Persistence"));
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("expo-dev", policy =>
@@ -11,6 +14,8 @@ builder.Services.AddCors(options =>
             .AllowAnyMethod();
     });
 });
+builder.Services.AddSingleton<IPostgresConnectionFactory, PostgresConnectionFactory>();
+builder.Services.AddHostedService<DatabaseBootstrapService>();
 builder.Services.AddSingleton<api.Services.IFinanceSnapshotService, api.Services.MockFinanceSnapshotService>();
 
 var app = builder.Build();

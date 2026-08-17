@@ -6,7 +6,8 @@ public sealed record FinanceSnapshot(
     IReadOnlyList<AccountSummary> Accounts,
     IReadOnlyList<PotSummary> Pots,
     IReadOnlyList<TransactionInboxItem> Inbox,
-    IReadOnlyList<ActiveObligationSummary> ActiveObligations);
+    IReadOnlyList<ActiveObligationSummary> ActiveObligations,
+    IReadOnlyList<EventSummary> Events);
 
 public sealed record HouseholdSummary(Guid Id, string Name, string BaseCurrency, string OwnerName, string PartnerName);
 
@@ -39,8 +40,48 @@ public sealed record TransactionInboxItem(
     bool IsSplit,
     bool RefundPending);
 
+public sealed record TransactionSplitLine(
+    Guid Id,
+    string Category,
+    string FundingSource,
+    decimal Amount,
+    string Notes);
+
+public sealed record TransactionDetail(
+    Guid Id,
+    string Merchant,
+    decimal Amount,
+    DateOnly TransactionDate,
+    string AccountName,
+    string Category,
+    string FundingSource,
+    string Owner,
+    bool IsAcknowledged,
+    bool RequiresPartnerReview,
+    bool IsSplit,
+    bool RefundPending,
+    string Notes,
+    IReadOnlyList<TransactionSplitLine> Splits);
+
+public sealed record UpdateTransactionRequest(
+    string Category,
+    string FundingSource,
+    string Owner,
+    bool IsSplit,
+    bool RefundPending,
+    bool IsAcknowledged,
+    string Notes,
+    IReadOnlyList<UpdateTransactionSplitRequest> Splits);
+
+public sealed record UpdateTransactionSplitRequest(
+    string Category,
+    string FundingSource,
+    decimal Amount,
+    string Notes);
+
 public sealed record ActiveObligationSummary(
     Guid Id,
+    Guid EventId,
     string EventName,
     string ItemName,
     DateOnly SpendWindowStart,
@@ -51,3 +92,44 @@ public sealed record ActiveObligationSummary(
     decimal VarianceAmount,
     string VarianceStatus,
     string ResolutionStatus);
+
+public sealed record EventSummary(
+    Guid Id,
+    string Name,
+    string Type,
+    string Status,
+    DateOnly DueDate,
+    DateOnly SpendWindowStart,
+    DateOnly SpendWindowEnd,
+    decimal PlannedAmount,
+    decimal FundedAmount,
+    decimal ActualAmount,
+    string VarianceStatus);
+
+public sealed record EventBudgetItem(
+    Guid Id,
+    string Name,
+    decimal PlannedAmount,
+    decimal ActualAmount,
+    string Status);
+
+public sealed record EventDetail(
+    Guid Id,
+    string Name,
+    string Type,
+    string Status,
+    DateOnly DueDate,
+    DateOnly SpendWindowStart,
+    DateOnly SpendWindowEnd,
+    decimal PlannedAmount,
+    decimal FundedAmount,
+    decimal ActualAmount,
+    string Notes,
+    IReadOnlyList<string> Tags,
+    IReadOnlyList<EventBudgetItem> Items);
+
+public sealed record UpdateEventRequest(
+    string Status,
+    decimal PlannedAmount,
+    decimal FundedAmount,
+    string Notes);
