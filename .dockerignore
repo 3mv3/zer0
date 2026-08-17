@@ -1,0 +1,9 @@
+.git
+.venv
+apps/mobile/node_modules
+apps/mobile/.expo
+apps/api/bin
+apps/api/obj
+**/.DS_Store
+Money - Copy.xlsx
+zero_sum_control.xlsx
