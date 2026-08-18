@@ -12,9 +12,22 @@ import { triggerRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
 const noFundingPotValue = '__none__';
+const recurrenceOptions: OptionSelectItem[] = [
+  { label: 'One-time', value: 'one-time' },
+  { label: 'Monthly', value: 'monthly' },
+  { label: 'Quarterly', value: 'quarterly' },
+  { label: 'Yearly', value: 'yearly' },
+];
+const recurrenceLabels: Record<string, string> = {
+  'one-time': 'one-time',
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+};
 
 type EditorState = {
   status: string;
+  recurrenceRule: EventDetail['recurrenceRule'];
   fundingPotId: string;
   plannedAmount: string;
   fundedAmount: string;
@@ -24,6 +37,7 @@ type EditorState = {
 function toEditor(item: EventDetail): EditorState {
   return {
     status: item.status,
+    recurrenceRule: item.recurrenceRule,
     fundingPotId: item.fundingPotId ?? noFundingPotValue,
     plannedAmount: item.plannedAmount.toFixed(2),
     fundedAmount: item.fundedAmount.toFixed(2),
@@ -71,6 +85,7 @@ export default function EventDetailScreen() {
       setErrorMessage(null);
       const payload = await updateEvent(id, {
         status: editor.status,
+        recurrenceRule: editor.recurrenceRule,
         fundingPotId: editor.fundingPotId === noFundingPotValue ? null : editor.fundingPotId,
         plannedAmount: Number(editor.plannedAmount || '0'),
         fundedAmount: Number(editor.fundedAmount || '0'),
@@ -103,7 +118,7 @@ export default function EventDetailScreen() {
     <AppShell>
       <Hero title={detail.name} subtitle="Track the event from forecast to active obligation and compare actuals against the plan." />
       {errorMessage ? <ErrorBanner message={errorMessage} onRetry={load} /> : null}
-      <SectionHeading eyebrow="Summary" title={`${detail.type} · ${detail.status}`} />
+      <SectionHeading eyebrow="Summary" title={`${detail.type} · ${detail.status} · ${recurrenceLabels[detail.recurrenceRule] ?? detail.recurrenceRule}`} />
       <SurfaceCard>
         <Text style={styles.meta}>Due {detail.dueDate} · spend window {detail.spendWindowStart} to {detail.spendWindowEnd}</Text>
         <Text style={styles.meta}>Big pot {detail.fundingPotName ?? 'not linked'}</Text>
@@ -119,6 +134,12 @@ export default function EventDetailScreen() {
         <Text style={styles.label}>Status</Text>
         <TextInput style={styles.input} value={editor.status} onChangeText={(value) => setEditor((current) => current ? { ...current, status: value } : current)} />
         <OptionSelect
+          label="Recurrence"
+          value={editor.recurrenceRule}
+          options={recurrenceOptions}
+          onChange={(value) => setEditor((current) => current ? { ...current, recurrenceRule: value as EditorState['recurrenceRule'] } : current)}
+        />
+        <OptionSelect
           label="Big pot"
           value={editor.fundingPotId}
           options={[{ label: 'No linked big pot', value: noFundingPotValue } as OptionSelectItem, ...bigPotOptions]}
@@ -130,7 +151,7 @@ export default function EventDetailScreen() {
         <TextInput style={styles.input} keyboardType="decimal-pad" value={editor.fundedAmount} onChangeText={(value) => setEditor((current) => current ? { ...current, fundedAmount: value } : current)} />
         <Text style={styles.label}>Notes</Text>
         <TextInput style={styles.notes} multiline value={editor.notes} onChangeText={(value) => setEditor((current) => current ? { ...current, notes: value } : current)} />
-        <Text style={styles.meta}>Only events linked to a big pot will appear when that same big pot funds a transaction.</Text>
+        <Text style={styles.meta}>Recurring events can model monthly, quarterly, or yearly bills that keep drawing from the same big pot over time.</Text>
         <Pressable style={styles.primaryButton} onPress={save} disabled={isSaving}>
           <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : 'Save event'}</Text>
         </Pressable>

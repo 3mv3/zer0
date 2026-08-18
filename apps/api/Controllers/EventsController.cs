@@ -9,6 +9,14 @@ using api.Services;
 [Route("api/events")]
 public sealed class EventsController(IFinanceSnapshotService financeSnapshotService) : ControllerBase
 {
+    private static readonly HashSet<string> AllowedRecurrenceRules = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "one-time",
+        "monthly",
+        "quarterly",
+        "yearly",
+    };
+
     [HttpGet]
     public IActionResult GetAll([FromQuery] Guid? fundingPotId)
     {
@@ -24,6 +32,8 @@ public sealed class EventsController(IFinanceSnapshotService financeSnapshotServ
     [HttpPost]
     public IActionResult Create([FromBody] CreateEventRequest request)
     {
+        var normalizedRequest = request with { RecurrenceRule = NormalizeRecurrenceRule(request.RecurrenceRule) };
+
         if (string.IsNullOrWhiteSpace(request.Name))
         {
             return BadRequest(new { message = "Name is required." });
@@ -39,19 +49,24 @@ public sealed class EventsController(IFinanceSnapshotService financeSnapshotServ
             return BadRequest(new { message = "Status is required." });
         }
 
-        var fundingPotValidationError = ValidateFundingPot(request.FundingPotId);
+        if (!AllowedRecurrenceRules.Contains(normalizedRequest.RecurrenceRule))
+        {
+            return BadRequest(new { message = "Recurrence must be one of: one-time, monthly, quarterly, yearly." });
+        }
+
+        var fundingPotValidationError = ValidateFundingPot(normalizedRequest.FundingPotId);
 
         if (fundingPotValidationError is not null)
         {
             return BadRequest(new { message = fundingPotValidationError });
         }
 
-        if (request.SpendWindowStart > request.SpendWindowEnd)
+        if (normalizedRequest.SpendWindowStart > normalizedRequest.SpendWindowEnd)
         {
             return BadRequest(new { message = "Spend window start must be on or before the spend window end." });
         }
 
-        var item = financeSnapshotService.CreateEvent(request);
+        var item = financeSnapshotService.CreateEvent(normalizedRequest);
 
         return CreatedAtAction(nameof(GetById), new { eventId = item.Id }, item);
     }
@@ -67,19 +82,26 @@ public sealed class EventsController(IFinanceSnapshotService financeSnapshotServ
     [HttpPut("{eventId:guid}")]
     public IActionResult Update(Guid eventId, [FromBody] UpdateEventRequest request)
     {
+        var normalizedRequest = request with { RecurrenceRule = NormalizeRecurrenceRule(request.RecurrenceRule) };
+
         if (string.IsNullOrWhiteSpace(request.Status))
         {
             return BadRequest(new { message = "Status is required." });
         }
 
-        var fundingPotValidationError = ValidateFundingPot(request.FundingPotId);
+        if (!AllowedRecurrenceRules.Contains(normalizedRequest.RecurrenceRule))
+        {
+            return BadRequest(new { message = "Recurrence must be one of: one-time, monthly, quarterly, yearly." });
+        }
+
+        var fundingPotValidationError = ValidateFundingPot(normalizedRequest.FundingPotId);
 
         if (fundingPotValidationError is not null)
         {
             return BadRequest(new { message = fundingPotValidationError });
         }
 
-        var item = financeSnapshotService.UpdateEvent(eventId, request);
+        var item = financeSnapshotService.UpdateEvent(eventId, normalizedRequest);
 
         return item is null ? NotFound() : Ok(item);
     }
@@ -101,5 +123,12 @@ public sealed class EventsController(IFinanceSnapshotService financeSnapshotServ
         return string.Equals(pot.Kind, "big-pot", StringComparison.OrdinalIgnoreCase)
             ? null
             : "Only big pots can fund events.";
+    }
+
+    private static string NormalizeRecurrenceRule(string? recurrenceRule)
+    {
+        return string.IsNullOrWhiteSpace(recurrenceRule)
+            ? "one-time"
+            : recurrenceRule.Trim().ToLowerInvariant();
     }
 }

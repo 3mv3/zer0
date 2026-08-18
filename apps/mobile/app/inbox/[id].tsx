@@ -233,16 +233,6 @@ export default function TransactionDetailScreen() {
             <Text style={styles.sourceText}>provider {detail.sourceProvider || 'manual'} · ref {detail.externalTransactionId || 'n/a'}</Text>
           </View>
         ) : null}
-        {shouldShowLinkedEvent ? (
-          <OptionSelect
-            label="Linked event"
-            value={editor.eventId}
-            options={[{ label: 'No linked event', value: noLinkedEventValue } as OptionSelectItem, ...eventOptions]}
-            onChange={(value) => setEditor((current) => current ? { ...current, eventId: value } : current)}
-            placeholder={isLoadingEventOptions ? 'Loading events...' : 'Select an event'}
-            disabled={isLoadingEventOptions}
-          />
-        ) : null}
         <View style={styles.formRow}>
           <View style={styles.field}>
             <OptionSelect label="Category" value={editor.category} options={options.categories} onChange={(value) => setEditor((current) => current ? { ...current, category: value } : current)} disabled={editor.isSplit} />
@@ -254,6 +244,16 @@ export default function TransactionDetailScreen() {
         <View style={styles.field}>
           <OptionSelect label="Owner" value={editor.owner} options={options.owners} onChange={(value) => setEditor((current) => current ? { ...current, owner: value } : current)} />
         </View>
+        {shouldShowLinkedEvent ? (
+          <OptionSelect
+            label="Linked event"
+            value={editor.eventId}
+            options={[{ label: 'No linked event', value: noLinkedEventValue } as OptionSelectItem, ...eventOptions]}
+            onChange={(value) => setEditor((current) => current ? { ...current, eventId: value } : current)}
+            placeholder={isLoadingEventOptions ? 'Loading events...' : 'Select an event'}
+            disabled={isLoadingEventOptions}
+          />
+        ) : null}
         <View style={styles.toggleRow}><Text style={styles.label}>Acknowledged</Text><Switch value={editor.isAcknowledged} onValueChange={(value) => setEditor((current) => current ? { ...current, isAcknowledged: value } : current)} /></View>
         <View style={styles.toggleRow}><Text style={styles.label}>Split transaction</Text><Switch value={editor.isSplit} onValueChange={(value) => setEditor((current) => current ? {
           ...current,

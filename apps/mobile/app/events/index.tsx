@@ -10,6 +10,13 @@ import { formatCurrency } from '../../src/lib/format';
 import { useRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
+const recurrenceLabels: Record<string, string> = {
+  'one-time': 'one-time',
+  monthly: 'monthly',
+  quarterly: 'quarterly',
+  yearly: 'yearly',
+};
+
 export default function EventsScreen() {
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,7 +60,7 @@ export default function EventsScreen() {
               <View style={styles.copy}>
                 <Text style={styles.title}>{item.name}</Text>
                 <Text style={styles.meta}>
-                  {item.type} · {item.status} · due {item.dueDate}{item.fundingPotName ? ` · ${item.fundingPotName}` : ''}
+                  {item.type} · {item.status} · {recurrenceLabels[item.recurrenceRule] ?? item.recurrenceRule} · due {item.dueDate}{item.fundingPotName ? ` · ${item.fundingPotName}` : ''}
                 </Text>
               </View>
               <View style={styles.right}>

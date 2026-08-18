@@ -11,11 +11,18 @@ import { triggerRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
 const noFundingPotValue = '__none__';
+const recurrenceOptions: OptionSelectItem[] = [
+  { label: 'One-time', value: 'one-time' },
+  { label: 'Monthly', value: 'monthly' },
+  { label: 'Quarterly', value: 'quarterly' },
+  { label: 'Yearly', value: 'yearly' },
+];
 
 type EditorState = {
   name: string;
   type: string;
   status: string;
+  recurrenceRule: 'one-time' | 'monthly' | 'quarterly' | 'yearly';
   fundingPotId: string;
   dueDate: string;
   spendWindowStart: string;
@@ -39,6 +46,7 @@ export default function NewEventScreen() {
     name: '',
     type: 'event',
     status: 'planned',
+    recurrenceRule: 'one-time',
     fundingPotId: noFundingPotValue,
     dueDate: getDateInputValue(30),
     spendWindowStart: getDateInputValue(0),
@@ -90,6 +98,7 @@ export default function NewEventScreen() {
         name: editor.name.trim(),
         type: editor.type.trim(),
         status: editor.status.trim(),
+        recurrenceRule: editor.recurrenceRule,
         fundingPotId: editor.fundingPotId === noFundingPotValue ? null : editor.fundingPotId,
         dueDate: editor.dueDate,
         spendWindowStart: editor.spendWindowStart,
@@ -115,7 +124,7 @@ export default function NewEventScreen() {
 
   return (
     <AppShell>
-      <Hero title="Create Event" subtitle="Capture a new holiday, birthday, or one-off obligation before spend starts landing in the current month." />
+      <Hero title="Create Event" subtitle="Capture a new one-off or recurring obligation before spend starts landing in the current month." />
       {errorMessage ? <ErrorBanner message={errorMessage} onRetry={save} /> : null}
       <SectionHeading eyebrow="New record" title="Seed the event planner" />
       <SurfaceCard>
@@ -125,6 +134,7 @@ export default function NewEventScreen() {
         <TextInput style={styles.input} value={editor.type} onChangeText={(value) => setEditor((current) => ({ ...current, type: value }))} />
         <Text style={styles.label}>Status</Text>
         <TextInput style={styles.input} value={editor.status} onChangeText={(value) => setEditor((current) => ({ ...current, status: value }))} />
+        <OptionSelect label="Recurrence" value={editor.recurrenceRule} options={recurrenceOptions} onChange={(value) => setEditor((current) => ({ ...current, recurrenceRule: value as EditorState['recurrenceRule'] }))} />
         <OptionSelect
           label="Big pot"
           value={editor.fundingPotId}
@@ -145,7 +155,7 @@ export default function NewEventScreen() {
         <TextInput style={styles.input} value={editor.tagsText} onChangeText={(value) => setEditor((current) => ({ ...current, tagsText: value }))} placeholder="holiday, sinking-fund" placeholderTextColor={colors.muted} />
         <Text style={styles.label}>Notes</Text>
         <TextInput style={styles.notes} multiline value={editor.notes} onChangeText={(value) => setEditor((current) => ({ ...current, notes: value }))} />
-        <Text style={styles.hint}>Only events linked to a big pot will appear when you select that same big pot as a transaction funding source.</Text>
+        <Text style={styles.hint}>Use quarterly or yearly recurrence for sinking-fund obligations that repeat. Events linked to a big pot will appear when that same big pot funds a transaction.</Text>
         <Pressable style={styles.primaryButton} onPress={save} disabled={isSaving}>
           <Text style={styles.primaryButtonText}>{isSaving ? 'Creating...' : 'Create event'}</Text>
         </Pressable>

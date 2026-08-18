@@ -178,6 +178,7 @@ export type EventSummary = {
   name: string;
   type: string;
   status: string;
+  recurrenceRule: 'one-time' | 'monthly' | 'quarterly' | 'yearly';
   fundingPotId?: string | null;
   fundingPotName?: string | null;
   dueDate: string;
@@ -214,6 +215,7 @@ export type EventDetail = {
   name: string;
   type: string;
   status: string;
+  recurrenceRule: 'one-time' | 'monthly' | 'quarterly' | 'yearly';
   fundingPotId?: string | null;
   fundingPotName?: string | null;
   dueDate: string;
@@ -237,6 +239,7 @@ export type CreateEventRequest = {
   name: string;
   type: string;
   status: string;
+  recurrenceRule: 'one-time' | 'monthly' | 'quarterly' | 'yearly';
   fundingPotId?: string | null;
   dueDate: string;
   spendWindowStart: string;
@@ -249,6 +252,7 @@ export type CreateEventRequest = {
 
 export type UpdateEventRequest = {
   status: string;
+  recurrenceRule: 'one-time' | 'monthly' | 'quarterly' | 'yearly';
   fundingPotId?: string | null;
   plannedAmount: number;
   fundedAmount: number;

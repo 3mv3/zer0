@@ -137,6 +137,7 @@ public sealed record EventSummary(
     string Name,
     string Type,
     string Status,
+    string RecurrenceRule,
     Guid? FundingPotId,
     string? FundingPotName,
     DateOnly DueDate,
@@ -159,6 +160,7 @@ public sealed record EventDetail(
     string Name,
     string Type,
     string Status,
+    string RecurrenceRule,
     Guid? FundingPotId,
     string? FundingPotName,
     DateOnly DueDate,
@@ -175,6 +177,7 @@ public sealed record CreateEventRequest(
     string Name,
     string Type,
     string Status,
+    string RecurrenceRule,
     Guid? FundingPotId,
     DateOnly DueDate,
     DateOnly SpendWindowStart,
@@ -186,6 +189,7 @@ public sealed record CreateEventRequest(
 
 public sealed record UpdateEventRequest(
     string Status,
+    string RecurrenceRule,
     Guid? FundingPotId,
     decimal PlannedAmount,
     decimal FundedAmount,
