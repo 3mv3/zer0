@@ -1,12 +1,13 @@
 // RF-SMART Elevate owns this file
 import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppShell, Hero, SectionHeading, SurfaceCard } from '../../src/components/layout';
 import { ErrorBanner, LoadingState } from '../../src/components/status';
 import { EventSummary, getEvents } from '../../src/lib/api';
 import { formatCurrency } from '../../src/lib/format';
+import { useRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
 export default function EventsScreen() {
@@ -27,9 +28,7 @@ export default function EventsScreen() {
     }
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useRouteRefresh('events', load);
 
   if (isLoading && events.length === 0) {
     return <LoadingState message="Loading event planner..." />;
@@ -39,6 +38,13 @@ export default function EventsScreen() {
     <AppShell>
       <Hero title="Events" subtitle="Birthdays, holidays, and one-off plans can now be explored from the event side." />
       {errorMessage ? <ErrorBanner message={errorMessage} onRetry={load} /> : null}
+      <View style={styles.actions}>
+        <Link href="/events/new" asChild>
+          <Pressable style={styles.primaryButton}>
+            <Text style={styles.primaryButtonText}>Create event</Text>
+          </Pressable>
+        </Link>
+      </View>
       <SectionHeading eyebrow="Planner" title={`${events.length} current event records`} />
       <SurfaceCard>
         {events.map((item) => (
@@ -63,6 +69,9 @@ export default function EventsScreen() {
 }
 
 const styles = StyleSheet.create({
+  actions: { paddingHorizontal: 24, marginBottom: 16, alignItems: 'flex-start' },
+  primaryButton: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 999, backgroundColor: colors.forest },
+  primaryButtonText: { color: '#FFF8EA', fontWeight: '700' },
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: 16 },
   copy: { flex: 1 },
   title: { color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 4 },

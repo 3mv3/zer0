@@ -7,6 +7,7 @@ import { AppShell, Hero, SectionHeading, SummaryTile, SurfaceCard } from '../src
 import { ErrorBanner, LoadingState } from '../src/components/status';
 import { ActiveObligation, getInbox, getObligations, getOverview, InboxResponse, OverviewResponse } from '../src/lib/api';
 import { formatCurrency } from '../src/lib/format';
+import { useRouteRefresh } from '../src/lib/route-refresh';
 import { colors, potAccentMap } from '../src/lib/theme';
 
 export default function DashboardScreen() {
@@ -37,12 +38,10 @@ export default function DashboardScreen() {
     }
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useRouteRefresh('dashboard', load);
 
   if (isLoading && !overview) {
-    return <LoadingState message="Loading dashboard from the mock API..." />;
+    return <LoadingState message="Loading dashboard..." />;
   }
 
   const pendingInbox = inbox?.pending ?? 0;

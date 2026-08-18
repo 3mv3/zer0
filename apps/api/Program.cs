@@ -2,7 +2,6 @@ using api.Data;
 using api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-var persistenceEnabled = builder.Configuration.GetValue<bool>("Persistence:Enabled");
 
 builder.Services.AddControllers();
 builder.Services.Configure<PersistenceOptions>(builder.Configuration.GetSection("Persistence"));
@@ -18,14 +17,7 @@ builder.Services.AddCors(options =>
 });
 builder.Services.AddSingleton<IPostgresConnectionFactory, PostgresConnectionFactory>();
 builder.Services.AddHostedService<DatabaseBootstrapService>();
-if (persistenceEnabled)
-{
-    builder.Services.AddSingleton<IFinanceSnapshotService, DapperFinanceSnapshotService>();
-}
-else
-{
-    builder.Services.AddSingleton<IFinanceSnapshotService, MockFinanceSnapshotService>();
-}
+builder.Services.AddSingleton<IFinanceSnapshotService, DapperFinanceSnapshotService>();
 
 var app = builder.Build();
 

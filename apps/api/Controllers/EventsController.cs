@@ -21,6 +21,34 @@ public sealed class EventsController(IFinanceSnapshotService financeSnapshotServ
         });
     }
 
+    [HttpPost]
+    public IActionResult Create([FromBody] CreateEventRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            return BadRequest(new { message = "Name is required." });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Type))
+        {
+            return BadRequest(new { message = "Type is required." });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Status))
+        {
+            return BadRequest(new { message = "Status is required." });
+        }
+
+        if (request.SpendWindowStart > request.SpendWindowEnd)
+        {
+            return BadRequest(new { message = "Spend window start must be on or before the spend window end." });
+        }
+
+        var item = financeSnapshotService.CreateEvent(request);
+
+        return CreatedAtAction(nameof(GetById), new { eventId = item.Id }, item);
+    }
+
     [HttpGet("{eventId:guid}")]
     public IActionResult GetById(Guid eventId)
     {

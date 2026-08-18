@@ -74,6 +74,8 @@ export type TransactionDetail = {
   amount: number;
   transactionDate: string;
   accountName: string;
+  sourceProvider: string;
+  externalTransactionId: string;
   category: string;
   fundingSource: string;
   owner: string;
@@ -83,6 +85,29 @@ export type TransactionDetail = {
   refundPending: boolean;
   notes: string;
   splits: TransactionSplitLine[];
+};
+
+export type CreateTransactionRequest = {
+  accountName: string;
+  merchant: string;
+  amount: number;
+  transactionDate: string;
+  sourceProvider: string;
+  externalTransactionId: string;
+  category: string;
+  fundingSource: string;
+  owner: string;
+  requiresPartnerReview: boolean;
+  isAcknowledged: boolean;
+  isSplit: boolean;
+  refundPending: boolean;
+  notes: string;
+  splits: Array<{
+    category: string;
+    fundingSource: string;
+    amount: number;
+    notes: string;
+  }>;
 };
 
 export type TransactionUpdateRequest = {
@@ -140,6 +165,21 @@ export type EventsResponse = {
   items: EventSummary[];
 };
 
+export type AuditEntry = {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  summary: string;
+  detailJson: string;
+  createdUtc: string;
+};
+
+export type AuditResponse = {
+  count: number;
+  items: AuditEntry[];
+};
+
 export type EventDetail = {
   id: string;
   name: string;
@@ -160,6 +200,19 @@ export type EventDetail = {
     actualAmount: number;
     status: string;
   }>;
+};
+
+export type CreateEventRequest = {
+  name: string;
+  type: string;
+  status: string;
+  dueDate: string;
+  spendWindowStart: string;
+  spendWindowEnd: string;
+  plannedAmount: number;
+  fundedAmount: number;
+  notes: string;
+  tags: string[];
 };
 
 export type UpdateEventRequest = {
@@ -196,6 +249,23 @@ export function getTransaction(transactionId: string) {
   return getJson<TransactionDetail>(`/api/transactions/${transactionId}`);
 }
 
+export async function createTransaction(request: CreateTransactionRequest) {
+  const response = await fetch(`${apiBaseUrl}/api/transactions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json()) as { message?: string };
+    throw new Error(payload.message ?? 'Unable to create transaction.');
+  }
+
+  return (await response.json()) as TransactionDetail;
+}
+
 export async function updateTransaction(transactionId: string, request: TransactionUpdateRequest) {
   const response = await fetch(`${apiBaseUrl}/api/transactions/${transactionId}`, {
     method: 'PUT',
@@ -221,8 +291,29 @@ export function getEvents() {
   return getJson<EventsResponse>('/api/events');
 }
 
+export async function createEvent(request: CreateEventRequest) {
+  const response = await fetch(`${apiBaseUrl}/api/events`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json()) as { message?: string };
+    throw new Error(payload.message ?? 'Unable to create event.');
+  }
+
+  return (await response.json()) as EventDetail;
+}
+
 export function getEvent(eventId: string) {
   return getJson<EventDetail>(`/api/events/${eventId}`);
+}
+
+export function getAuditEntries() {
+  return getJson<AuditResponse>('/api/audit');
 }
 
 export async function updateEvent(eventId: string, request: UpdateEventRequest) {

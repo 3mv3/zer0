@@ -1,12 +1,13 @@
 // RF-SMART Elevate owns this file
 import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppShell, Hero, SectionHeading, SurfaceCard } from '../../src/components/layout';
 import { ErrorBanner, LoadingState } from '../../src/components/status';
 import { getInbox, InboxResponse } from '../../src/lib/api';
 import { formatCurrency } from '../../src/lib/format';
+import { useRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
 export default function InboxScreen() {
@@ -26,9 +27,7 @@ export default function InboxScreen() {
     }
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useRouteRefresh('inbox', load);
 
   if (isLoading && !inbox) {
     return <LoadingState message="Loading inbox..." />;
@@ -38,6 +37,13 @@ export default function InboxScreen() {
     <AppShell>
       <Hero title="Transaction Inbox" subtitle="Every imported transaction must be reviewed, funded, and acknowledged." />
       {errorMessage ? <ErrorBanner message={errorMessage} onRetry={load} /> : null}
+      <View style={styles.actions}>
+        <Link href="/inbox/new" asChild>
+          <Pressable style={styles.primaryButton}>
+            <Text style={styles.primaryButtonText}>Import transaction</Text>
+          </Pressable>
+        </Link>
+      </View>
       <SectionHeading eyebrow="Queue" title={`${inbox?.pending ?? 0} items still need action`} />
       <SurfaceCard>
         {(inbox?.items ?? []).map((item) => (
@@ -64,6 +70,21 @@ export default function InboxScreen() {
 }
 
 const styles = StyleSheet.create({
+  actions: {
+    paddingHorizontal: 24,
+    marginBottom: 16,
+    alignItems: 'flex-start',
+  },
+  primaryButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: colors.forest,
+  },
+  primaryButtonText: {
+    color: '#FFF8EA',
+    fontWeight: '700',
+  },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',

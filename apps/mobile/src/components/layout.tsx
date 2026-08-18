@@ -23,6 +23,7 @@ export function Hero({ title, subtitle }: { title: string; subtitle: string }) {
         <NavLink href="/" label="Dashboard" />
         <NavLink href="/inbox" label="Inbox" />
         <NavLink href="/events" label="Events" />
+        <NavLink href="/audit" label="Audit" />
       </View>
     </View>
   );
@@ -50,7 +51,7 @@ export function SummaryTile({ value, label }: { value: string; label: string }) 
   );
 }
 
-function NavLink({ href, label }: { href: '/' | '/inbox' | '/events'; label: string }) {
+function NavLink({ href, label }: { href: '/' | '/audit' | '/inbox' | '/events'; label: string }) {
   return (
     <Link href={href} asChild>
       <Pressable style={styles.navLink}>

@@ -7,6 +7,7 @@ import { AppShell, Hero, SectionHeading, SurfaceCard } from '../../src/component
 import { ErrorBanner, LoadingState } from '../../src/components/status';
 import { EventDetail, getEvent, updateEvent } from '../../src/lib/api';
 import { formatCurrency } from '../../src/lib/format';
+import { triggerRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
 type EditorState = {
@@ -67,6 +68,8 @@ export default function EventDetailScreen() {
       });
       setDetail(payload);
       setEditor(toEditor(payload));
+      triggerRouteRefresh('events');
+      triggerRouteRefresh('audit');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unexpected event save failure.');
     } finally {
@@ -117,6 +120,7 @@ export default function EventDetailScreen() {
 
       <SectionHeading eyebrow="Items" title="Budget lines" />
       <SurfaceCard>
+        {detail.items.length === 0 ? <Text style={styles.emptyState}>No budget lines yet.</Text> : null}
         {detail.items.map((item) => (
           <View key={item.id} style={styles.itemRow}>
             <View>
@@ -153,6 +157,7 @@ const styles = StyleSheet.create({
   notes: { minHeight: 96, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#FFFCF4', color: colors.text, fontSize: 15, textAlignVertical: 'top' },
   primaryButton: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 999, backgroundColor: colors.forest, alignSelf: 'flex-start' },
   primaryButtonText: { color: '#FFF8EA', fontWeight: '700' },
+  emptyState: { color: colors.muted, fontSize: 14 },
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   itemTitle: { color: colors.text, fontWeight: '700', fontSize: 15 },
   itemMeta: { color: colors.muted, fontSize: 12 },

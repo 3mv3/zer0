@@ -1,6 +1,7 @@
 namespace api.Services;
 
 using System.Data;
+using System.Text.Json;
 
 using api.Data;
 using api.Models;
@@ -18,12 +19,90 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         var payCycle = connection.QuerySingleOrDefault<PayCycleSummary>(CurrentPayCycleSql)
             ?? throw new InvalidOperationException("No current pay cycle found. Run the bootstrap seed or load pay cycle data first.");
         var accounts = connection.Query<AccountSummary>(AccountsSql).ToList();
-        var pots = connection.Query<PotSummary>(PotsSql).ToList();
+        var pots = connection.Query<PotSummary>(PotsSql, new
+        {
+            StartDate = payCycle.StartDate.ToDateTime(TimeOnly.MinValue),
+            EndDate = payCycle.EndDate.ToDateTime(TimeOnly.MinValue),
+        }).ToList();
         var inbox = connection.Query<TransactionInboxItem>(InboxSql).ToList();
         var obligations = connection.Query<ActiveObligationSummary>(ActiveObligationsSql).ToList();
         var events = connection.Query<EventSummary>(EventSummariesSql).ToList();
 
         return new FinanceSnapshot(household, payCycle, accounts, pots, inbox, obligations, events);
+    }
+
+    public TransactionDetail CreateTransaction(CreateTransactionRequest request)
+    {
+        using var connection = connectionFactory.CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        var householdId = connection.QuerySingleOrDefault<Guid?>(PrimaryHouseholdIdSql, transaction: transaction)
+            ?? throw new InvalidOperationException("No household data found. Run the bootstrap seed or load household data first.");
+
+        var transactionId = Guid.NewGuid();
+        var isSplit = request.IsSplit || request.Splits.Count > 1;
+
+        connection.Execute(InsertTransactionSql, new
+        {
+            TransactionId = transactionId,
+            HouseholdId = householdId,
+            request.AccountName,
+            request.Merchant,
+            request.Amount,
+            TransactionDate = request.TransactionDate.ToDateTime(TimeOnly.MinValue),
+            SourceProvider = request.SourceProvider ?? string.Empty,
+            ExternalTransactionId = request.ExternalTransactionId ?? string.Empty,
+            request.Category,
+            request.FundingSource,
+            Owner = request.Owner,
+            request.RequiresPartnerReview,
+            request.IsAcknowledged,
+            IsSplit = isSplit,
+            request.RefundPending,
+            Notes = request.Notes ?? string.Empty,
+        }, transaction);
+
+        foreach (var split in request.Splits)
+        {
+            connection.Execute(InsertTransactionSplitSql, new
+            {
+                Id = Guid.NewGuid(),
+                TransactionId = transactionId,
+                split.Category,
+                split.FundingSource,
+                split.Amount,
+                Notes = split.Notes ?? string.Empty,
+            }, transaction);
+        }
+
+        InsertAuditEntry(
+            connection,
+            transaction,
+            "transaction",
+            transactionId,
+            "created",
+            $"Imported transaction created for {request.Merchant}",
+            new
+            {
+                request.AccountName,
+                request.Merchant,
+                request.Amount,
+                request.TransactionDate,
+                request.Category,
+                request.FundingSource,
+                request.Owner,
+                request.RequiresPartnerReview,
+                request.RefundPending,
+                request.SourceProvider,
+                request.ExternalTransactionId,
+                request.Splits,
+            });
+
+        transaction.Commit();
+
+        return GetTransaction(connection, transactionId)
+            ?? throw new InvalidOperationException("The transaction was created, but could not be reloaded.");
     }
 
     public TransactionDetail? GetTransaction(Guid transactionId)
@@ -73,6 +152,25 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             }, transaction);
         }
 
+        InsertAuditEntry(
+            connection,
+            transaction,
+            "transaction",
+            transactionId,
+            "updated",
+            $"Transaction updated for {existing.Merchant}",
+            new
+            {
+                request.Category,
+                request.FundingSource,
+                request.Owner,
+                request.IsSplit,
+                request.RefundPending,
+                request.IsAcknowledged,
+                request.Notes,
+                request.Splits,
+            });
+
         transaction.Commit();
 
         return GetTransaction(connection, transactionId);
@@ -83,6 +181,81 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         using var connection = connectionFactory.CreateConnection();
 
         return connection.Query<EventSummary>(EventSummariesSql).ToList();
+    }
+
+    public IReadOnlyList<AuditEntry> GetAuditEntries()
+    {
+        using var connection = connectionFactory.CreateConnection();
+
+        return connection.Query<AuditEntry>(AuditEntriesSql).ToList();
+    }
+
+    public EventDetail CreateEvent(CreateEventRequest request)
+    {
+        using var connection = connectionFactory.CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        var householdId = connection.QuerySingleOrDefault<Guid?>(PrimaryHouseholdIdSql, transaction: transaction)
+            ?? throw new InvalidOperationException("No household data found. Run the bootstrap seed or load household data first.");
+
+        var eventId = Guid.NewGuid();
+        var tags = request.Tags
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(tag => tag.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        connection.Execute(InsertEventSql, new
+        {
+            EventId = eventId,
+            HouseholdId = householdId,
+            request.Name,
+            Type = request.Type,
+            Status = request.Status,
+            DueDate = request.DueDate.ToDateTime(TimeOnly.MinValue),
+            SpendWindowStart = request.SpendWindowStart.ToDateTime(TimeOnly.MinValue),
+            SpendWindowEnd = request.SpendWindowEnd.ToDateTime(TimeOnly.MinValue),
+            request.PlannedAmount,
+            request.FundedAmount,
+            ActualAmount = 0m,
+            Notes = request.Notes ?? string.Empty,
+        }, transaction);
+
+        foreach (var tag in tags)
+        {
+            connection.Execute(InsertEventTagSql, new
+            {
+                EventId = eventId,
+                Tag = tag,
+            }, transaction);
+        }
+
+        InsertAuditEntry(
+            connection,
+            transaction,
+            "event",
+            eventId,
+            "created",
+            $"Event created for {request.Name}",
+            new
+            {
+                request.Name,
+                request.Type,
+                request.Status,
+                request.DueDate,
+                request.SpendWindowStart,
+                request.SpendWindowEnd,
+                request.PlannedAmount,
+                request.FundedAmount,
+                request.Notes,
+                Tags = tags,
+            });
+
+        transaction.Commit();
+
+        return GetEvent(connection, eventId)
+            ?? throw new InvalidOperationException("The event was created, but could not be reloaded.");
     }
 
     public EventDetail? GetEvent(Guid eventId)
@@ -114,9 +287,45 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             request.Notes,
         }, transaction);
 
+        InsertAuditEntry(
+            connection,
+            transaction,
+            "event",
+            eventId,
+            "updated",
+            $"Event updated for {existing.Name}",
+            new
+            {
+                request.Status,
+                request.PlannedAmount,
+                request.FundedAmount,
+                request.Notes,
+            });
+
         transaction.Commit();
 
         return GetEvent(connection, eventId);
+    }
+
+    private static void InsertAuditEntry(
+        IDbConnection connection,
+        IDbTransaction transaction,
+        string entityType,
+        Guid entityId,
+        string action,
+        string summary,
+        object detail)
+    {
+        connection.Execute(InsertAuditEntrySql, new
+        {
+            Id = Guid.NewGuid(),
+            EntityType = entityType,
+            EntityId = entityId,
+            Action = action,
+            Summary = summary,
+            DetailJson = JsonSerializer.Serialize(detail),
+            CreatedUtc = DateTime.UtcNow,
+        }, transaction);
     }
 
     private static TransactionDetail? GetTransaction(IDbConnection connection, Guid transactionId)
@@ -136,6 +345,8 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             detail.Amount,
             detail.TransactionDate,
             detail.AccountName,
+            detail.SourceProvider,
+            detail.ExternalTransactionId,
             detail.Category,
             detail.FundingSource,
             detail.Owner,
@@ -181,6 +392,8 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         decimal Amount,
         DateOnly TransactionDate,
         string AccountName,
+        string SourceProvider,
+        string ExternalTransactionId,
         string Category,
         string FundingSource,
         string Owner,
@@ -215,6 +428,13 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         limit 1;
         """;
 
+    private const string PrimaryHouseholdIdSql = """
+        select id
+        from households
+        order by created_utc asc
+        limit 1;
+        """;
+
     private const string CurrentPayCycleSql = """
         select
             id as "Id",
@@ -242,17 +462,31 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
 
     private const string PotsSql = """
         select
-            id as "Id",
-            name as "Name",
-            pot_type as "Type",
-            planned_amount as "PlannedAmount",
-            actual_amount as "ActualAmount",
-            remaining_amount as "RemainingAmount",
-            owner_name as "Owner",
-            overspend_rule as "OverspendRule",
-            carry_forward_enabled as "CarryForwardEnabled"
+            pots.id as "Id",
+            pots.name as "Name",
+            pots.pot_type as "Type",
+            pots.planned_amount as "PlannedAmount",
+            coalesce((
+                select sum(transaction_splits.amount)
+                from transaction_splits
+                inner join imported_transactions on imported_transactions.id = transaction_splits.transaction_id
+                where transaction_splits.funding_source = pots.name
+                    and imported_transactions.transaction_date >= @StartDate
+                    and imported_transactions.transaction_date <= @EndDate
+            ), 0) as "ActualAmount",
+            pots.planned_amount - coalesce((
+                select sum(transaction_splits.amount)
+                from transaction_splits
+                inner join imported_transactions on imported_transactions.id = transaction_splits.transaction_id
+                where transaction_splits.funding_source = pots.name
+                    and imported_transactions.transaction_date >= @StartDate
+                    and imported_transactions.transaction_date <= @EndDate
+            ), 0) as "RemainingAmount",
+            pots.owner_name as "Owner",
+            pots.overspend_rule as "OverspendRule",
+            pots.carry_forward_enabled as "CarryForwardEnabled"
         from pots
-        order by name asc;
+        order by pots.name asc;
         """;
 
     private const string InboxSql = """
@@ -280,6 +514,8 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             amount as "Amount",
             transaction_date as "TransactionDate",
             account_name as "AccountName",
+            source_provider as "SourceProvider",
+            external_transaction_id as "ExternalTransactionId",
             category as "Category",
             funding_source as "FundingSource",
             owner_name as "Owner",
@@ -290,6 +526,43 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             notes as "Notes"
         from imported_transactions
         where id = @transactionId;
+        """;
+
+    private const string InsertTransactionSql = """
+        insert into imported_transactions (
+            id,
+            household_id,
+            account_name,
+            merchant,
+            amount,
+            transaction_date,
+            source_provider,
+            external_transaction_id,
+            category,
+            funding_source,
+            owner_name,
+            requires_partner_review,
+            is_acknowledged,
+            is_split,
+            refund_pending,
+            notes)
+        values (
+            @TransactionId,
+            @HouseholdId,
+            @AccountName,
+            @Merchant,
+            @Amount,
+            @TransactionDate,
+            @SourceProvider,
+            @ExternalTransactionId,
+            @Category,
+            @FundingSource,
+            @Owner,
+            @RequiresPartnerReview,
+            @IsAcknowledged,
+            @IsSplit,
+            @RefundPending,
+            @Notes);
         """;
 
     private const string TransactionSplitsSql = """
@@ -384,6 +657,41 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         order by name asc;
         """;
 
+    private const string InsertEventSql = """
+        insert into events (
+            id,
+            household_id,
+            name,
+            event_type,
+            status,
+            due_date,
+            spend_window_start,
+            spend_window_end,
+            planned_amount,
+            funded_amount,
+            actual_amount,
+            notes)
+        values (
+            @EventId,
+            @HouseholdId,
+            @Name,
+            @Type,
+            @Status,
+            @DueDate,
+            @SpendWindowStart,
+            @SpendWindowEnd,
+            @PlannedAmount,
+            @FundedAmount,
+            @ActualAmount,
+            @Notes);
+        """;
+
+    private const string InsertEventTagSql = """
+        insert into event_tags (event_id, tag)
+        values (@EventId, @Tag)
+        on conflict (event_id, tag) do nothing;
+        """;
+
     private const string UpdateEventSql = """
         update events
         set
@@ -411,5 +719,24 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         from active_obligations obligations
         inner join events on events.id = obligations.event_id
         order by obligations.spend_window_end asc, events.name asc;
+        """;
+
+    private const string InsertAuditEntrySql = """
+        insert into audit_entries (id, entity_type, entity_id, action, summary, detail_json, created_utc)
+        values (@Id, @EntityType, @EntityId, @Action, @Summary, @DetailJson, @CreatedUtc);
+        """;
+
+    private const string AuditEntriesSql = """
+        select
+            id as "Id",
+            entity_type as "EntityType",
+            entity_id as "EntityId",
+            action as "Action",
+            summary as "Summary",
+            detail_json as "DetailJson",
+            created_utc as "CreatedUtc"
+        from audit_entries
+        order by created_utc desc
+        limit 50;
         """;
 }

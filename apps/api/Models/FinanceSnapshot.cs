@@ -53,6 +53,8 @@ public sealed record TransactionDetail(
     decimal Amount,
     DateOnly TransactionDate,
     string AccountName,
+    string SourceProvider,
+    string ExternalTransactionId,
     string Category,
     string FundingSource,
     string Owner,
@@ -62,6 +64,23 @@ public sealed record TransactionDetail(
     bool RefundPending,
     string Notes,
     IReadOnlyList<TransactionSplitLine> Splits);
+
+public sealed record CreateTransactionRequest(
+    string AccountName,
+    string Merchant,
+    decimal Amount,
+    DateOnly TransactionDate,
+    string SourceProvider,
+    string ExternalTransactionId,
+    string Category,
+    string FundingSource,
+    string Owner,
+    bool RequiresPartnerReview,
+    bool IsAcknowledged,
+    bool IsSplit,
+    bool RefundPending,
+    string Notes,
+    IReadOnlyList<UpdateTransactionSplitRequest> Splits);
 
 public sealed record UpdateTransactionRequest(
     string Category,
@@ -128,8 +147,29 @@ public sealed record EventDetail(
     IReadOnlyList<string> Tags,
     IReadOnlyList<EventBudgetItem> Items);
 
+public sealed record CreateEventRequest(
+    string Name,
+    string Type,
+    string Status,
+    DateOnly DueDate,
+    DateOnly SpendWindowStart,
+    DateOnly SpendWindowEnd,
+    decimal PlannedAmount,
+    decimal FundedAmount,
+    string Notes,
+    IReadOnlyList<string> Tags);
+
 public sealed record UpdateEventRequest(
     string Status,
     decimal PlannedAmount,
     decimal FundedAmount,
     string Notes);
+
+public sealed record AuditEntry(
+    Guid Id,
+    string EntityType,
+    Guid EntityId,
+    string Action,
+    string Summary,
+    string DetailJson,
+    DateTime CreatedUtc);
