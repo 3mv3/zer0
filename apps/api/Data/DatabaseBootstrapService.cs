@@ -19,19 +19,34 @@ public sealed class DatabaseBootstrapService(
             return;
         }
 
-        var schemaPath = Path.Combine(environment.ContentRootPath, "Data", "Sql", "001_initial.sql");
+        var sqlDirectory = Path.Combine(environment.ContentRootPath, "Data", "Sql");
 
-        if (!File.Exists(schemaPath))
+        if (!Directory.Exists(sqlDirectory))
         {
-            logger.LogWarning("Schema bootstrap file not found at {SchemaPath}", schemaPath);
+            logger.LogWarning("Bootstrap SQL directory not found at {SqlDirectory}", sqlDirectory);
+            return;
+        }
+
+        var scriptPaths = Directory
+            .GetFiles(sqlDirectory, "*.sql", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (scriptPaths.Length == 0)
+        {
+            logger.LogWarning("No bootstrap SQL scripts were found in {SqlDirectory}", sqlDirectory);
             return;
         }
 
         await using var connection = (NpgsqlConnection)connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
-        var sql = await File.ReadAllTextAsync(schemaPath, cancellationToken);
-        await connection.ExecuteAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
+        foreach (var scriptPath in scriptPaths)
+        {
+            var sql = await File.ReadAllTextAsync(scriptPath, cancellationToken);
+            await connection.ExecuteAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
+            logger.LogInformation("Applied bootstrap script {ScriptName}", Path.GetFileName(scriptPath));
+        }
 
         logger.LogInformation("Phase 1 schema bootstrap completed using Dapper.");
     }

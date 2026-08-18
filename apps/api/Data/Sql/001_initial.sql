@@ -16,6 +16,16 @@ create table if not exists pay_cycles (
     is_current boolean not null default false
 );
 
+create table if not exists accounts (
+    id uuid primary key,
+    household_id uuid not null references households(id),
+    name text not null,
+    account_type text not null,
+    balance numeric(12, 2) not null,
+    currency text not null,
+    is_joint boolean not null default false
+);
+
 create table if not exists pots (
     id uuid primary key,
     household_id uuid not null references households(id),
@@ -44,6 +54,12 @@ create table if not exists events (
     notes text not null default ''
 );
 
+create table if not exists event_tags (
+    event_id uuid not null references events(id) on delete cascade,
+    tag text not null,
+    primary key (event_id, tag)
+);
+
 create table if not exists event_items (
     id uuid primary key,
     event_id uuid not null references events(id) on delete cascade,
@@ -51,6 +67,20 @@ create table if not exists event_items (
     planned_amount numeric(12, 2) not null,
     actual_amount numeric(12, 2) not null,
     status text not null
+);
+
+create table if not exists active_obligations (
+    id uuid primary key,
+    event_id uuid not null references events(id) on delete cascade,
+    item_name text not null,
+    spend_window_start date not null,
+    spend_window_end date not null,
+    planned_amount numeric(12, 2) not null,
+    funded_amount numeric(12, 2) not null,
+    actual_amount numeric(12, 2) not null,
+    variance_amount numeric(12, 2) not null,
+    variance_status text not null,
+    resolution_status text not null
 );
 
 create table if not exists imported_transactions (
@@ -63,11 +93,15 @@ create table if not exists imported_transactions (
     category text not null,
     funding_source text not null,
     owner_name text not null,
+    requires_partner_review boolean not null default false,
     is_acknowledged boolean not null default false,
     is_split boolean not null default false,
     refund_pending boolean not null default false,
     notes text not null default ''
 );
+
+alter table if exists imported_transactions
+    add column if not exists requires_partner_review boolean not null default false;
 
 create table if not exists transaction_splits (
     id uuid primary key,
