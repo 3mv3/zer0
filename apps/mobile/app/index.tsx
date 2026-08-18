@@ -1,6 +1,6 @@
 // RF-SMART Elevate owns this file
 import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppShell, Hero, SectionHeading, SummaryTile, SurfaceCard } from '../src/components/layout';
@@ -45,66 +45,35 @@ export default function DashboardScreen() {
   }
 
   const pendingInbox = inbox?.pending ?? 0;
+  const featuredPots = (overview?.pots ?? []).filter((pot) => pot.showOnDashboard && pot.kind === 'little-pot');
 
   return (
     <AppShell>
       <Hero
         title={overview?.household.name ?? 'Unavailable'}
-        subtitle="Phase 1 dashboard reading routed API data for pots, inbox pressure, and active obligations."
+        subtitle="Shared household view for current-cycle budget, transactions needing action, and active event obligations."
       />
 
       {errorMessage ? <ErrorBanner message={errorMessage} onRetry={load} /> : null}
 
       <View style={styles.summaryRow}>
         <SummaryTile value={overview?.currentPayCycle.label ?? '--'} label="current cycle" />
-        <SummaryTile value={String(pendingInbox)} label="needs action" />
+        <SummaryTile value={String(pendingInbox)} label="needs action" href="/inbox" />
         <SummaryTile value={String(obligations.length)} label="active events" />
       </View>
 
-      <SectionHeading eyebrow="Inbox" title="Transaction pressure" />
-      <SurfaceCard>
-        {(inbox?.items ?? []).slice(0, 3).map((item) => {
-          const highlight = item.isAcknowledged
-            ? 'done'
-            : item.requiresPartnerReview
-              ? 'partner review'
-              : 'acknowledge';
-
-          return (
-            <Link key={item.id} href={`/inbox/${item.id}`} asChild>
-              <Pressable style={styles.listRow}>
-                <View style={styles.listCopy}>
-                  <Text style={styles.rowTitle}>{item.merchant}</Text>
-                  <Text style={styles.rowMeta}>
-                    {item.accountName} · {item.category} · {item.refundPending ? 'refund pending' : 'ready'}
-                  </Text>
-                </View>
-                <View style={styles.rowAside}>
-                  <Text style={styles.rowAmount}>{formatCurrency(item.amount)}</Text>
-                  <Text
-                    style={[
-                      styles.badge,
-                      highlight === 'done'
-                        ? styles.badgeDone
-                        : highlight === 'partner review'
-                          ? styles.badgeWarn
-                          : styles.badgeAlert,
-                    ]}
-                  >
-                    {highlight}
-                  </Text>
-                </View>
-              </Pressable>
-            </Link>
-          );
-        })}
-      </SurfaceCard>
-
       <SectionHeading eyebrow="Pots" title="Remaining this cycle" />
+      <View style={styles.sectionActionRow}>
+        <Link href="/pots" asChild>
+          <Pressable style={styles.inlineLink}>
+            <Text style={styles.inlineLinkText}>Choose visible pots</Text>
+          </Pressable>
+        </Link>
+      </View>
       <View style={styles.potGrid}>
-        {(overview?.pots ?? []).map((pot) => (
+        {featuredPots.map((pot) => (
           <View key={pot.id} style={styles.potCard}>
-            <View style={[styles.potAccent, { backgroundColor: potAccentMap[pot.type] ?? colors.muted }]} />
+            <View style={[styles.potAccent, { backgroundColor: potAccentMap[pot.kind] ?? colors.muted }]} />
             <Text style={styles.potName}>{pot.name}</Text>
             <Text style={styles.potOwner}>{pot.owner}</Text>
             <Text style={pot.remainingAmount < 0 ? styles.potNegative : styles.potAmount}>
@@ -113,6 +82,12 @@ export default function DashboardScreen() {
             <Text style={styles.potPlanned}>of {formatCurrency(pot.plannedAmount)}</Text>
           </View>
         ))}
+        {featuredPots.length === 0 ? (
+          <SurfaceCard>
+            <Text style={styles.emptyTitle}>No featured pots selected</Text>
+            <Text style={styles.emptyCopy}>Open Pots and mark the balances you want surfaced on the dashboard.</Text>
+          </SurfaceCard>
+        ) : null}
       </View>
 
       <SectionHeading eyebrow="Events" title="Active obligations this month" />
@@ -158,55 +133,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     marginTop: -8,
   },
-  listRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 16,
+  sectionActionRow: {
+    paddingHorizontal: 24,
+    marginBottom: 14,
+    alignItems: 'flex-start',
   },
-  listCopy: {
-    flex: 1,
-    gap: 4,
-  },
-  rowTitle: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  rowMeta: {
-    color: colors.muted,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  rowAside: {
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-  rowAmount: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  inlineLink: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: 999,
-    overflow: 'hidden',
-    fontSize: 11,
+    backgroundColor: '#EFE5D1',
+  },
+  inlineLinkText: {
+    color: '#694812',
     fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-  },
-  badgeAlert: {
-    color: '#8D1F13',
-    backgroundColor: '#FDE2DA',
-  },
-  badgeWarn: {
-    color: '#8A4B08',
-    backgroundColor: '#F8E2BF',
-  },
-  badgeDone: {
-    color: '#155E53',
-    backgroundColor: '#D9F4ED',
   },
   potGrid: {
     flexDirection: 'row',
@@ -257,6 +197,26 @@ const styles = StyleSheet.create({
   potPlanned: {
     color: colors.muted,
     fontSize: 13,
+  },
+  emptyTitle: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  emptyCopy: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  rowTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  rowMeta: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
   },
   stack: {
     paddingHorizontal: 24,

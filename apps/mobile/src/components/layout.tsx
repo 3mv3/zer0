@@ -21,7 +21,8 @@ export function Hero({ title, subtitle }: { title: string; subtitle: string }) {
       <Text style={styles.heroSubtitle}>{subtitle}</Text>
       <View style={styles.navRow}>
         <NavLink href="/" label="Dashboard" />
-        <NavLink href="/inbox" label="Inbox" />
+        <NavLink href="/inbox" label="Transactions" />
+        <NavLink href="/pots" label="Pots" />
         <NavLink href="/events" label="Events" />
         <NavLink href="/audit" label="Audit" />
       </View>
@@ -42,16 +43,26 @@ export function SurfaceCard({ children }: PropsWithChildren) {
   return <View style={styles.card}>{children}</View>;
 }
 
-export function SummaryTile({ value, label }: { value: string; label: string }) {
-  return (
-    <View style={styles.summaryTile}>
+export function SummaryTile({ value, label, href }: { value: string; label: string; href?: '/' | '/audit' | '/inbox' | '/events' | '/pots' }) {
+  const content = (
+    <>
       <Text style={styles.summaryValue}>{value}</Text>
       <Text style={styles.summaryLabel}>{label}</Text>
-    </View>
+    </>
   );
+
+  if (href) {
+    return (
+      <Link href={href} asChild>
+        <Pressable style={styles.summaryTile}>{content}</Pressable>
+      </Link>
+    );
+  }
+
+  return <View style={styles.summaryTile}>{content}</View>;
 }
 
-function NavLink({ href, label }: { href: '/' | '/audit' | '/inbox' | '/events'; label: string }) {
+function NavLink({ href, label }: { href: '/' | '/audit' | '/inbox' | '/events' | '/pots'; label: string }) {
   return (
     <Link href={href} asChild>
       <Pressable style={styles.navLink}>

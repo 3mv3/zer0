@@ -1,18 +1,22 @@
 // RF-SMART Elevate owns this file
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput } from 'react-native';
 
 import { AppShell, Hero, SectionHeading, SurfaceCard } from '../../src/components/layout';
+import { OptionSelect, OptionSelectItem } from '../../src/components/option-select';
 import { ErrorBanner } from '../../src/components/status';
-import { createEvent } from '../../src/lib/api';
+import { createEvent, getPots } from '../../src/lib/api';
 import { triggerRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
+
+const noFundingPotValue = '__none__';
 
 type EditorState = {
   name: string;
   type: string;
   status: string;
+  fundingPotId: string;
   dueDate: string;
   spendWindowStart: string;
   spendWindowEnd: string;
@@ -30,10 +34,12 @@ function getDateInputValue(offsetDays = 0) {
 }
 
 export default function NewEventScreen() {
+  const [bigPotOptions, setBigPotOptions] = useState<OptionSelectItem[]>([]);
   const [editor, setEditor] = useState<EditorState>({
     name: '',
     type: 'event',
     status: 'planned',
+    fundingPotId: noFundingPotValue,
     dueDate: getDateInputValue(30),
     spendWindowStart: getDateInputValue(0),
     spendWindowEnd: getDateInputValue(30),
@@ -44,6 +50,21 @@ export default function NewEventScreen() {
   });
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadBigPots() {
+      try {
+        const payload = await getPots();
+        setBigPotOptions(payload.items
+          .filter((pot) => pot.kind === 'big-pot')
+          .map((pot) => ({ label: pot.name, value: pot.id })));
+      } catch {
+        setBigPotOptions([]);
+      }
+    }
+
+    void loadBigPots();
+  }, []);
 
   async function save() {
     if (!editor.name.trim()) {
@@ -69,6 +90,7 @@ export default function NewEventScreen() {
         name: editor.name.trim(),
         type: editor.type.trim(),
         status: editor.status.trim(),
+        fundingPotId: editor.fundingPotId === noFundingPotValue ? null : editor.fundingPotId,
         dueDate: editor.dueDate,
         spendWindowStart: editor.spendWindowStart,
         spendWindowEnd: editor.spendWindowEnd,
@@ -103,6 +125,12 @@ export default function NewEventScreen() {
         <TextInput style={styles.input} value={editor.type} onChangeText={(value) => setEditor((current) => ({ ...current, type: value }))} />
         <Text style={styles.label}>Status</Text>
         <TextInput style={styles.input} value={editor.status} onChangeText={(value) => setEditor((current) => ({ ...current, status: value }))} />
+        <OptionSelect
+          label="Big pot"
+          value={editor.fundingPotId}
+          options={[{ label: 'No linked big pot', value: noFundingPotValue } as OptionSelectItem, ...bigPotOptions]}
+          onChange={(value) => setEditor((current) => ({ ...current, fundingPotId: value }))}
+        />
         <Text style={styles.label}>Due date</Text>
         <TextInput style={styles.input} value={editor.dueDate} onChangeText={(value) => setEditor((current) => ({ ...current, dueDate: value }))} />
         <Text style={styles.label}>Spend window start</Text>
@@ -117,6 +145,7 @@ export default function NewEventScreen() {
         <TextInput style={styles.input} value={editor.tagsText} onChangeText={(value) => setEditor((current) => ({ ...current, tagsText: value }))} placeholder="holiday, sinking-fund" placeholderTextColor={colors.muted} />
         <Text style={styles.label}>Notes</Text>
         <TextInput style={styles.notes} multiline value={editor.notes} onChangeText={(value) => setEditor((current) => ({ ...current, notes: value }))} />
+        <Text style={styles.hint}>Only events linked to a big pot will appear when you select that same big pot as a transaction funding source.</Text>
         <Pressable style={styles.primaryButton} onPress={save} disabled={isSaving}>
           <Text style={styles.primaryButtonText}>{isSaving ? 'Creating...' : 'Create event'}</Text>
         </Pressable>
@@ -129,6 +158,7 @@ const styles = StyleSheet.create({
   label: { color: colors.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' },
   input: { borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#FFFCF4', color: colors.text, fontSize: 15 },
   notes: { minHeight: 96, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#FFFCF4', color: colors.text, fontSize: 15, textAlignVertical: 'top' },
+  hint: { color: colors.muted, fontSize: 13, lineHeight: 19 },
   primaryButton: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 999, backgroundColor: colors.forest, alignSelf: 'flex-start' },
   primaryButtonText: { color: '#FFF8EA', fontWeight: '700' },
 });

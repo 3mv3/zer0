@@ -10,9 +10,9 @@ using api.Services;
 public sealed class EventsController(IFinanceSnapshotService financeSnapshotService) : ControllerBase
 {
     [HttpGet]
-    public IActionResult GetAll()
+    public IActionResult GetAll([FromQuery] Guid? fundingPotId)
     {
-        var items = financeSnapshotService.GetEvents();
+        var items = financeSnapshotService.GetEvents(fundingPotId);
 
         return Ok(new
         {
@@ -37,6 +37,13 @@ public sealed class EventsController(IFinanceSnapshotService financeSnapshotServ
         if (string.IsNullOrWhiteSpace(request.Status))
         {
             return BadRequest(new { message = "Status is required." });
+        }
+
+        var fundingPotValidationError = ValidateFundingPot(request.FundingPotId);
+
+        if (fundingPotValidationError is not null)
+        {
+            return BadRequest(new { message = fundingPotValidationError });
         }
 
         if (request.SpendWindowStart > request.SpendWindowEnd)
@@ -65,8 +72,34 @@ public sealed class EventsController(IFinanceSnapshotService financeSnapshotServ
             return BadRequest(new { message = "Status is required." });
         }
 
+        var fundingPotValidationError = ValidateFundingPot(request.FundingPotId);
+
+        if (fundingPotValidationError is not null)
+        {
+            return BadRequest(new { message = fundingPotValidationError });
+        }
+
         var item = financeSnapshotService.UpdateEvent(eventId, request);
 
         return item is null ? NotFound() : Ok(item);
+    }
+
+    private string? ValidateFundingPot(Guid? fundingPotId)
+    {
+        if (fundingPotId is null)
+        {
+            return null;
+        }
+
+        var pot = financeSnapshotService.GetPots().FirstOrDefault(item => item.Id == fundingPotId.Value);
+
+        if (pot is null)
+        {
+            return "Funding pot was not found.";
+        }
+
+        return string.Equals(pot.Kind, "big-pot", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : "Only big pots can fund events.";
     }
 }

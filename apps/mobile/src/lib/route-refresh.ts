@@ -2,7 +2,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type RouteRefreshTarget = 'audit' | 'dashboard' | 'events' | 'inbox';
+export type RouteRefreshTarget = 'audit' | 'dashboard' | 'events' | 'inbox' | 'pots';
 
 const listeners = new Map<RouteRefreshTarget, Set<() => void>>();
 

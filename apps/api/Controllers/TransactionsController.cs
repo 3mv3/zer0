@@ -9,6 +9,8 @@ using api.Services;
 [Route("api/transactions")]
 public sealed class TransactionsController(IFinanceSnapshotService financeSnapshotService) : ControllerBase
 {
+    private const string SplitParentValue = "Split";
+
     [HttpGet("inbox")]
     public IActionResult GetInbox()
     {
@@ -25,10 +27,14 @@ public sealed class TransactionsController(IFinanceSnapshotService financeSnapsh
     [HttpPost]
     public IActionResult Create([FromBody] CreateTransactionRequest request)
     {
-        var normalizedRequest = request with
+        var normalizedRequest = NormalizeCreateRequest(request);
+
+        var linkedEventError = ValidateLinkedEvent(normalizedRequest.FundingSource, normalizedRequest.EventId, normalizedRequest.IsSplit);
+
+        if (linkedEventError is not null)
         {
-            Splits = NormalizeSplits(request.IsSplit, request.Amount, request.Category, request.FundingSource, request.Notes, request.Splits),
-        };
+            return BadRequest(new { message = linkedEventError });
+        }
 
         var validationError = ValidateTransactionRequest(request.Amount, normalizedRequest.Splits, request.Merchant, request.AccountName);
 
@@ -60,10 +66,14 @@ public sealed class TransactionsController(IFinanceSnapshotService financeSnapsh
             return NotFound();
         }
 
-        var normalizedRequest = request with
+        var normalizedRequest = NormalizeUpdateRequest(request, existing.Amount);
+
+        var linkedEventError = ValidateLinkedEvent(normalizedRequest.FundingSource, normalizedRequest.EventId, normalizedRequest.IsSplit);
+
+        if (linkedEventError is not null)
         {
-            Splits = NormalizeSplits(request.IsSplit, existing.Amount, request.Category, request.FundingSource, request.Notes, request.Splits),
-        };
+            return BadRequest(new { message = linkedEventError });
+        }
 
         var validationError = ValidateTransactionRequest(existing.Amount, normalizedRequest.Splits, existing.Merchant, existing.AccountName);
 
@@ -75,6 +85,32 @@ public sealed class TransactionsController(IFinanceSnapshotService financeSnapsh
         var updated = financeSnapshotService.UpdateTransaction(transactionId, normalizedRequest);
 
         return Ok(updated);
+    }
+
+    private static CreateTransactionRequest NormalizeCreateRequest(CreateTransactionRequest request)
+    {
+        var parentCategory = request.IsSplit ? SplitParentValue : request.Category;
+        var parentFundingSource = request.IsSplit ? SplitParentValue : request.FundingSource;
+
+        return request with
+        {
+            Category = parentCategory,
+            FundingSource = parentFundingSource,
+            Splits = NormalizeSplits(request.IsSplit, request.Amount, parentCategory, parentFundingSource, request.Notes, request.Splits),
+        };
+    }
+
+    private static UpdateTransactionRequest NormalizeUpdateRequest(UpdateTransactionRequest request, decimal amount)
+    {
+        var parentCategory = request.IsSplit ? SplitParentValue : request.Category;
+        var parentFundingSource = request.IsSplit ? SplitParentValue : request.FundingSource;
+
+        return request with
+        {
+            Category = parentCategory,
+            FundingSource = parentFundingSource,
+            Splits = NormalizeSplits(request.IsSplit, amount, parentCategory, parentFundingSource, request.Notes, request.Splits),
+        };
     }
 
     private static IReadOnlyList<UpdateTransactionSplitRequest> NormalizeSplits(
@@ -120,5 +156,37 @@ public sealed class TransactionsController(IFinanceSnapshotService financeSnapsh
         var totalSplitAmount = splits.Sum(split => split.Amount);
 
         return totalSplitAmount != amount ? "Split total must equal transaction amount." : null;
+    }
+
+    private string? ValidateLinkedEvent(string fundingSource, Guid? eventId, bool isSplit)
+    {
+        if (eventId is null)
+        {
+            return null;
+        }
+
+        if (isSplit)
+        {
+            return "Linked events are only available when the funding source is a big pot.";
+        }
+
+        var pots = financeSnapshotService.GetPots();
+        var fundingPot = pots.FirstOrDefault(pot => string.Equals(pot.Name, fundingSource, StringComparison.OrdinalIgnoreCase));
+
+        if (fundingPot is null || !string.Equals(fundingPot.Kind, "big-pot", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Linked events are only available when the funding source is a big pot.";
+        }
+
+        var linkedEvent = financeSnapshotService.GetEvent(eventId.Value);
+
+        if (linkedEvent is null)
+        {
+            return "Linked event was not found.";
+        }
+
+        return linkedEvent.FundingPotId == fundingPot.Id
+            ? null
+            : "The linked event does not belong to the selected big pot.";
     }
 }

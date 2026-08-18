@@ -10,25 +10,129 @@ using Dapper;
 
 public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory connectionFactory) : IFinanceSnapshotService
 {
+    private static readonly string[] BigPotStorageTypes = ["big-pot", "sinking-fund", "holiday", "savings", "emergency"];
+
     public FinanceSnapshot GetSnapshot()
     {
         using var connection = connectionFactory.CreateConnection();
 
         var household = connection.QuerySingleOrDefault<HouseholdSummary>(HouseholdSql)
             ?? throw new InvalidOperationException("No household data found. Run the bootstrap seed or load household data first.");
-        var payCycle = connection.QuerySingleOrDefault<PayCycleSummary>(CurrentPayCycleSql)
-            ?? throw new InvalidOperationException("No current pay cycle found. Run the bootstrap seed or load pay cycle data first.");
+        var payCycle = GetCurrentPayCycle(connection);
         var accounts = connection.Query<AccountSummary>(AccountsSql).ToList();
         var pots = connection.Query<PotSummary>(PotsSql, new
         {
+            BigPotStorageTypes,
             StartDate = payCycle.StartDate.ToDateTime(TimeOnly.MinValue),
             EndDate = payCycle.EndDate.ToDateTime(TimeOnly.MinValue),
         }).ToList();
         var inbox = connection.Query<TransactionInboxItem>(InboxSql).ToList();
         var obligations = connection.Query<ActiveObligationSummary>(ActiveObligationsSql).ToList();
-        var events = connection.Query<EventSummary>(EventSummariesSql).ToList();
+        var events = connection.Query<EventSummary>(EventSummariesSql, new { FundingPotId = (Guid?)null }).ToList();
 
         return new FinanceSnapshot(household, payCycle, accounts, pots, inbox, obligations, events);
+    }
+
+    public IReadOnlyList<PotSummary> GetPots()
+    {
+        using var connection = connectionFactory.CreateConnection();
+
+        var payCycle = GetCurrentPayCycle(connection);
+
+        return connection.Query<PotSummary>(PotsSql, new
+        {
+            BigPotStorageTypes,
+            StartDate = payCycle.StartDate.ToDateTime(TimeOnly.MinValue),
+            EndDate = payCycle.EndDate.ToDateTime(TimeOnly.MinValue),
+        }).ToList();
+    }
+
+    public PotSummary CreatePot(CreatePotRequest request)
+    {
+        using var connection = connectionFactory.CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        var householdId = connection.QuerySingleOrDefault<Guid?>(PrimaryHouseholdIdSql, transaction: transaction)
+            ?? throw new InvalidOperationException("No household data found. Run the bootstrap seed or load household data first.");
+
+        var potId = Guid.NewGuid();
+
+        connection.Execute(InsertPotSql, new
+        {
+            PotId = potId,
+            HouseholdId = householdId,
+            request.Name,
+            Kind = NormalizePotKind(request.Kind),
+            request.PlannedAmount,
+            Owner = request.Owner,
+            OverspendRule = request.OverspendRule,
+            request.CarryForwardEnabled,
+            request.ShowOnDashboard,
+        }, transaction);
+
+        InsertAuditEntry(
+            connection,
+            transaction,
+            "pot",
+            potId,
+            "created",
+            $"Pot created for {request.Name}",
+            new
+            {
+                request.Name,
+                request.Kind,
+                request.PlannedAmount,
+                request.Owner,
+                request.OverspendRule,
+                request.CarryForwardEnabled,
+                request.ShowOnDashboard,
+            });
+
+        transaction.Commit();
+
+        var payCycle = GetCurrentPayCycle(connection);
+
+        return GetPot(connection, potId, payCycle)
+            ?? throw new InvalidOperationException("The pot was created, but could not be reloaded.");
+    }
+
+    public PotSummary? UpdatePot(Guid potId, UpdatePotRequest request)
+    {
+        using var connection = connectionFactory.CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        var updatedRows = connection.Execute(UpdatePotSql, new
+        {
+            potId,
+            request.PlannedAmount,
+            request.ShowOnDashboard,
+        }, transaction);
+
+        if (updatedRows == 0)
+        {
+            return null;
+        }
+
+        InsertAuditEntry(
+            connection,
+            transaction,
+            "pot",
+            potId,
+            "updated",
+            "Pot updated",
+            new
+            {
+                request.PlannedAmount,
+                request.ShowOnDashboard,
+            });
+
+        transaction.Commit();
+
+        var payCycle = GetCurrentPayCycle(connection);
+
+        return GetPot(connection, potId, payCycle);
     }
 
     public TransactionDetail CreateTransaction(CreateTransactionRequest request)
@@ -55,6 +159,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             ExternalTransactionId = request.ExternalTransactionId ?? string.Empty,
             request.Category,
             request.FundingSource,
+            request.EventId,
             Owner = request.Owner,
             request.RequiresPartnerReview,
             request.IsAcknowledged,
@@ -91,6 +196,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
                 request.TransactionDate,
                 request.Category,
                 request.FundingSource,
+                request.EventId,
                 request.Owner,
                 request.RequiresPartnerReview,
                 request.RefundPending,
@@ -130,6 +236,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             transactionId,
             request.Category,
             request.FundingSource,
+            request.EventId,
             Owner = request.Owner,
             request.IsSplit,
             request.RefundPending,
@@ -163,6 +270,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             {
                 request.Category,
                 request.FundingSource,
+                request.EventId,
                 request.Owner,
                 request.IsSplit,
                 request.RefundPending,
@@ -176,11 +284,11 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         return GetTransaction(connection, transactionId);
     }
 
-    public IReadOnlyList<EventSummary> GetEvents()
+    public IReadOnlyList<EventSummary> GetEvents(Guid? fundingPotId = null)
     {
         using var connection = connectionFactory.CreateConnection();
 
-        return connection.Query<EventSummary>(EventSummariesSql).ToList();
+        return connection.Query<EventSummary>(EventSummariesSql, new { FundingPotId = fundingPotId }).ToList();
     }
 
     public IReadOnlyList<AuditEntry> GetAuditEntries()
@@ -213,6 +321,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             request.Name,
             Type = request.Type,
             Status = request.Status,
+            request.FundingPotId,
             DueDate = request.DueDate.ToDateTime(TimeOnly.MinValue),
             SpendWindowStart = request.SpendWindowStart.ToDateTime(TimeOnly.MinValue),
             SpendWindowEnd = request.SpendWindowEnd.ToDateTime(TimeOnly.MinValue),
@@ -243,6 +352,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
                 request.Name,
                 request.Type,
                 request.Status,
+                request.FundingPotId,
                 request.DueDate,
                 request.SpendWindowStart,
                 request.SpendWindowEnd,
@@ -282,6 +392,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         {
             eventId,
             request.Status,
+            request.FundingPotId,
             request.PlannedAmount,
             request.FundedAmount,
             request.Notes,
@@ -297,6 +408,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             new
             {
                 request.Status,
+                request.FundingPotId,
                 request.PlannedAmount,
                 request.FundedAmount,
                 request.Notes,
@@ -328,6 +440,30 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         }, transaction);
     }
 
+    private static PotSummary? GetPot(IDbConnection connection, Guid potId, PayCycleSummary payCycle)
+    {
+        return connection.QuerySingleOrDefault<PotSummary>(PotByIdSql, new
+        {
+            BigPotStorageTypes,
+            potId,
+            StartDate = payCycle.StartDate.ToDateTime(TimeOnly.MinValue),
+            EndDate = payCycle.EndDate.ToDateTime(TimeOnly.MinValue),
+        });
+    }
+
+    private static string NormalizePotKind(string kind)
+    {
+        return string.Equals(kind, "big-pot", StringComparison.OrdinalIgnoreCase)
+            ? "big-pot"
+            : "little-pot";
+    }
+
+    private static PayCycleSummary GetCurrentPayCycle(IDbConnection connection)
+    {
+        return connection.QuerySingleOrDefault<PayCycleSummary>(CurrentPayCycleSql)
+            ?? throw new InvalidOperationException("No current pay cycle found. Run the bootstrap seed or load pay cycle data first.");
+    }
+
     private static TransactionDetail? GetTransaction(IDbConnection connection, Guid transactionId)
     {
         var detail = connection.QuerySingleOrDefault<TransactionDetailRow>(TransactionDetailSql, new { transactionId });
@@ -349,6 +485,8 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             detail.ExternalTransactionId,
             detail.Category,
             detail.FundingSource,
+            detail.EventId,
+            detail.EventName,
             detail.Owner,
             detail.IsAcknowledged,
             detail.RequiresPartnerReview,
@@ -375,6 +513,8 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             detail.Name,
             detail.Type,
             detail.Status,
+            detail.FundingPotId,
+            detail.FundingPotName,
             detail.DueDate,
             detail.SpendWindowStart,
             detail.SpendWindowEnd,
@@ -396,6 +536,8 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         string ExternalTransactionId,
         string Category,
         string FundingSource,
+        Guid? EventId,
+        string? EventName,
         string Owner,
         bool IsAcknowledged,
         bool RequiresPartnerReview,
@@ -408,6 +550,8 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         string Name,
         string Type,
         string Status,
+        Guid? FundingPotId,
+        string? FundingPotName,
         DateOnly DueDate,
         DateOnly SpendWindowStart,
         DateOnly SpendWindowEnd,
@@ -464,7 +608,10 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         select
             pots.id as "Id",
             pots.name as "Name",
-            pots.pot_type as "Type",
+            case
+                when pots.pot_type = any(@BigPotStorageTypes) then 'big-pot'
+                else 'little-pot'
+            end as "Kind",
             pots.planned_amount as "PlannedAmount",
             coalesce((
                 select sum(transaction_splits.amount)
@@ -484,48 +631,124 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             ), 0) as "RemainingAmount",
             pots.owner_name as "Owner",
             pots.overspend_rule as "OverspendRule",
-            pots.carry_forward_enabled as "CarryForwardEnabled"
+            pots.carry_forward_enabled as "CarryForwardEnabled",
+            pots.show_on_dashboard as "ShowOnDashboard"
         from pots
         order by pots.name asc;
         """;
 
+    private const string PotByIdSql = """
+        select
+            pots.id as "Id",
+            pots.name as "Name",
+            case
+                when pots.pot_type = any(@BigPotStorageTypes) then 'big-pot'
+                else 'little-pot'
+            end as "Kind",
+            pots.planned_amount as "PlannedAmount",
+            coalesce((
+                select sum(transaction_splits.amount)
+                from transaction_splits
+                inner join imported_transactions on imported_transactions.id = transaction_splits.transaction_id
+                where transaction_splits.funding_source = pots.name
+                    and imported_transactions.transaction_date >= @StartDate
+                    and imported_transactions.transaction_date <= @EndDate
+            ), 0) as "ActualAmount",
+            pots.planned_amount - coalesce((
+                select sum(transaction_splits.amount)
+                from transaction_splits
+                inner join imported_transactions on imported_transactions.id = transaction_splits.transaction_id
+                where transaction_splits.funding_source = pots.name
+                    and imported_transactions.transaction_date >= @StartDate
+                    and imported_transactions.transaction_date <= @EndDate
+            ), 0) as "RemainingAmount",
+            pots.owner_name as "Owner",
+            pots.overspend_rule as "OverspendRule",
+            pots.carry_forward_enabled as "CarryForwardEnabled",
+            pots.show_on_dashboard as "ShowOnDashboard"
+        from pots
+        where pots.id = @potId;
+        """;
+
+    private const string InsertPotSql = """
+        insert into pots (
+            id,
+            household_id,
+            name,
+            pot_type,
+            planned_amount,
+            actual_amount,
+            remaining_amount,
+            owner_name,
+            overspend_rule,
+            carry_forward_enabled,
+            show_on_dashboard)
+        values (
+            @PotId,
+            @HouseholdId,
+            @Name,
+            @Kind,
+            @PlannedAmount,
+            0,
+            @PlannedAmount,
+            @Owner,
+            @OverspendRule,
+            @CarryForwardEnabled,
+            @ShowOnDashboard);
+        """;
+
+    private const string UpdatePotSql = """
+        update pots
+        set
+            planned_amount = @PlannedAmount,
+            remaining_amount = @PlannedAmount,
+            show_on_dashboard = @ShowOnDashboard
+        where id = @potId;
+        """;
+
     private const string InboxSql = """
         select
-            id as "Id",
-            merchant as "Merchant",
-            amount as "Amount",
-            transaction_date as "TransactionDate",
-            account_name as "AccountName",
-            category as "Category",
-            funding_source as "FundingSource",
-            owner_name as "Owner",
-            is_acknowledged as "IsAcknowledged",
-            requires_partner_review as "RequiresPartnerReview",
-            is_split as "IsSplit",
-            refund_pending as "RefundPending"
+            imported_transactions.id as "Id",
+            imported_transactions.merchant as "Merchant",
+            imported_transactions.amount as "Amount",
+            imported_transactions.transaction_date as "TransactionDate",
+            imported_transactions.account_name as "AccountName",
+            imported_transactions.category as "Category",
+            imported_transactions.funding_source as "FundingSource",
+            imported_transactions.event_id as "EventId",
+            events.name as "EventName",
+            imported_transactions.owner_name as "Owner",
+            imported_transactions.is_acknowledged as "IsAcknowledged",
+            imported_transactions.requires_partner_review as "RequiresPartnerReview",
+            imported_transactions.is_split as "IsSplit",
+            imported_transactions.refund_pending as "RefundPending"
         from imported_transactions
-        order by transaction_date desc, merchant asc;
+        left join events on events.id = imported_transactions.event_id
+        order by imported_transactions.transaction_date desc, imported_transactions.merchant asc;
         """;
 
     private const string TransactionDetailSql = """
         select
-            id as "Id",
-            merchant as "Merchant",
-            amount as "Amount",
-            transaction_date as "TransactionDate",
-            account_name as "AccountName",
-            source_provider as "SourceProvider",
-            external_transaction_id as "ExternalTransactionId",
-            category as "Category",
-            funding_source as "FundingSource",
-            owner_name as "Owner",
-            is_acknowledged as "IsAcknowledged",
-            requires_partner_review as "RequiresPartnerReview",
-            is_split as "IsSplit",
-            refund_pending as "RefundPending",
-            notes as "Notes"
+            imported_transactions.id as "Id",
+            imported_transactions.merchant as "Merchant",
+            imported_transactions.amount as "Amount",
+            imported_transactions.transaction_date as "TransactionDate",
+            imported_transactions.account_name as "AccountName",
+            imported_transactions.source_provider as "SourceProvider",
+            imported_transactions.external_transaction_id as "ExternalTransactionId",
+            imported_transactions.category as "Category",
+            imported_transactions.funding_source as "FundingSource",
+            imported_transactions.event_id as "EventId",
+            events.name as "EventName",
+            imported_transactions.owner_name as "Owner",
+            imported_transactions.is_acknowledged as "IsAcknowledged",
+            imported_transactions.requires_partner_review as "RequiresPartnerReview",
+            imported_transactions.is_split as "IsSplit",
+            imported_transactions.refund_pending as "RefundPending",
+            imported_transactions.notes as "Notes"
         from imported_transactions
-        where id = @transactionId;
+        left join events on events.id = imported_transactions.event_id
+        where imported_transactions.id = @transactionId;
         """;
 
     private const string InsertTransactionSql = """
@@ -540,6 +763,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             external_transaction_id,
             category,
             funding_source,
+            event_id,
             owner_name,
             requires_partner_review,
             is_acknowledged,
@@ -557,6 +781,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             @ExternalTransactionId,
             @Category,
             @FundingSource,
+            @EventId,
             @Owner,
             @RequiresPartnerReview,
             @IsAcknowledged,
@@ -582,6 +807,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         set
             category = @Category,
             funding_source = @FundingSource,
+            event_id = @EventId,
             owner_name = @Owner,
             is_split = @IsSplit,
             refund_pending = @RefundPending,
@@ -602,40 +828,47 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
 
     private const string EventSummariesSql = """
         select
-            id as "Id",
-            name as "Name",
-            event_type as "Type",
-            status as "Status",
-            due_date as "DueDate",
-            spend_window_start as "SpendWindowStart",
-            spend_window_end as "SpendWindowEnd",
-            planned_amount as "PlannedAmount",
-            funded_amount as "FundedAmount",
-            actual_amount as "ActualAmount",
+            events.id as "Id",
+            events.name as "Name",
+            events.event_type as "Type",
+            events.status as "Status",
+            events.funding_pot_id as "FundingPotId",
+            pots.name as "FundingPotName",
+            events.due_date as "DueDate",
+            events.spend_window_start as "SpendWindowStart",
+            events.spend_window_end as "SpendWindowEnd",
+            events.planned_amount as "PlannedAmount",
+            events.funded_amount as "FundedAmount",
+            events.actual_amount as "ActualAmount",
             case
-                when actual_amount > planned_amount then 'over-budget'
-                when actual_amount > 0 and actual_amount < planned_amount then 'in-progress'
+                when events.actual_amount > events.planned_amount then 'over-budget'
+                when events.actual_amount > 0 and events.actual_amount < events.planned_amount then 'in-progress'
                 else 'on-budget'
             end as "VarianceStatus"
         from events
-        order by due_date asc, name asc;
+        left join pots on pots.id = events.funding_pot_id
+        where @FundingPotId is null or events.funding_pot_id = @FundingPotId
+        order by events.due_date asc, events.name asc;
         """;
 
     private const string EventDetailSql = """
         select
-            id as "Id",
-            name as "Name",
-            event_type as "Type",
-            status as "Status",
-            due_date as "DueDate",
-            spend_window_start as "SpendWindowStart",
-            spend_window_end as "SpendWindowEnd",
-            planned_amount as "PlannedAmount",
-            funded_amount as "FundedAmount",
-            actual_amount as "ActualAmount",
-            notes as "Notes"
+            events.id as "Id",
+            events.name as "Name",
+            events.event_type as "Type",
+            events.status as "Status",
+            events.funding_pot_id as "FundingPotId",
+            pots.name as "FundingPotName",
+            events.due_date as "DueDate",
+            events.spend_window_start as "SpendWindowStart",
+            events.spend_window_end as "SpendWindowEnd",
+            events.planned_amount as "PlannedAmount",
+            events.funded_amount as "FundedAmount",
+            events.actual_amount as "ActualAmount",
+            events.notes as "Notes"
         from events
-        where id = @eventId;
+        left join pots on pots.id = events.funding_pot_id
+        where events.id = @eventId;
         """;
 
     private const string EventTagsSql = """
@@ -664,6 +897,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             name,
             event_type,
             status,
+            funding_pot_id,
             due_date,
             spend_window_start,
             spend_window_end,
@@ -677,6 +911,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
             @Name,
             @Type,
             @Status,
+            @FundingPotId,
             @DueDate,
             @SpendWindowStart,
             @SpendWindowEnd,
@@ -696,6 +931,7 @@ public sealed class DapperFinanceSnapshotService(IPostgresConnectionFactory conn
         update events
         set
             status = @Status,
+            funding_pot_id = @FundingPotId,
             planned_amount = @PlannedAmount,
             funded_amount = @FundedAmount,
             notes = @Notes

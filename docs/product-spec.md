@@ -72,17 +72,15 @@ Out of scope for phase 1:
 
 ### Funding Source Rules
 
-- For phase 1, a funding source can only be a person or a pot
-- A pot is a generic source bucket and may represent:
-  - a household budget
-  - a personal budget
-  - a sinking fund pot
-  - a savings pot
-  - an emergency fund pot
-  - a refund pending bucket
-  - another planned source of money
+- A funding source can only ever be either a person or a pot
+- A pot funding source may be either:
+  - a little pot used for cycle-budgeted day-to-day spending
+  - a big pot used as a longer-range reserve such as the annual sinking fund
+- A person funding source represents spend that is attributable to a person rather than drawn from a household pot
 - Transactions may be split across multiple funding sources
 - Each split line must point to exactly one funding source
+- A transaction may optionally link to an event when the spend belongs to a specific irregular obligation funded by a big pot
+- If a transaction is split, the parent transaction category and funding source should both be `Split`
 
 ### Overspend Handling
 
@@ -166,6 +164,7 @@ Recommended `Transaction` fields:
 - normalized description
 - transaction type
 - cardholder if known
+- optional event id
 - pay-cycle id
 - acknowledgment status
 
@@ -190,19 +189,23 @@ Recommended `TransactionSplit` fields:
 - `BudgetAdjustment`
 - `TransferPlan`
 
-The `Pot` should be the main planning primitive. Different pot types can drive different UI behavior.
+The `Pot` should be split into two behavioral modes.
 
-Suggested pot types:
+Pot modes:
 
-- household budget
-- personal budget
-- sinking fund
-- holiday
-- savings
-- emergency
-- contingency
-- refund pending
-- reimbursement due
+- `LittlePot`
+  - scoped to the active pay cycle or week-level operating budget
+  - has a regular cycle budget
+  - supports regular inputs and regular outputs
+  - has no forecasting engine
+- `BigPot`
+  - scoped to a year or other longer planning horizon
+  - represents a reserve such as the sinking fund
+  - supports regular planned contributions and irregular top-ups
+  - supports irregular outputs and allocations to events
+  - must support forecast vs actual over time
+
+Recommended special-purpose little pots can still exist for operational workflows, such as refund pending or reimbursement due, but they should behave like little pots rather than a separate generic type system.
 
 ### Events and Forecasting
 
@@ -230,6 +233,13 @@ Event features:
 - copied-from-prior-year reference
 - change history with reason
 - global event status such as `planned` or `committed`
+
+Relationship to pots:
+
+- A big pot is the funding envelope for irregular future spending
+- An event is the specific irregular obligation or plan that may draw from a big pot
+- An event may declare a primary funding pot
+- Spending can point to both a funding source and an event so the system can answer both "where did the money come from?" and "what was this for?"
 
 Each event budget item should support:
 
@@ -304,10 +314,10 @@ Goal: show available money by pot within the active 25th-25th cycle.
 
 The pay-cycle view should show:
 
-- planned allocation per pot
-- actual spend per pot
-- remaining available per pot
-- overspend handling rule per pot
+- planned allocation per little pot
+- actual spend per little pot
+- remaining available per little pot
+- overspend handling rule per little pot
 - pending refunds affecting available amount
 - partner reimbursement due
 - required transfers between pots
@@ -333,10 +343,12 @@ Workflow:
 1. Create or update recurring events and one-off events
 2. Create event instances for the relevant year
 3. Assign planned values and months due
-4. Feed event requirements into sinking fund forecast by calendar month
+4. Feed event requirements into the big-pot forecast by calendar month
 5. When event items are paid, reduce future required funding and record actuals
 
 This is the replacement for the current Gifts plus Sinking Fund spreadsheet chain.
+
+For the user's current workflow, the annual sinking fund is the primary big pot. Monthly contributions and irregular bonus top-ups increase the big-pot balance, and irregular events such as birthdays, holidays, and Christmas draw from it over the year.
 
 ### 5. Holiday Planning
 

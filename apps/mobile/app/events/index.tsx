@@ -53,7 +53,7 @@ export default function EventsScreen() {
               <View style={styles.copy}>
                 <Text style={styles.title}>{item.name}</Text>
                 <Text style={styles.meta}>
-                  {item.type} · {item.status} · due {item.dueDate}
+                  {item.type} · {item.status} · due {item.dueDate}{item.fundingPotName ? ` · ${item.fundingPotName}` : ''}
                 </Text>
               </View>
               <View style={styles.right}>

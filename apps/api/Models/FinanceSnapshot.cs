@@ -18,13 +18,27 @@ public sealed record AccountSummary(Guid Id, string Name, string Type, decimal B
 public sealed record PotSummary(
     Guid Id,
     string Name,
-    string Type,
+    string Kind,
     decimal PlannedAmount,
     decimal ActualAmount,
     decimal RemainingAmount,
     string Owner,
     string OverspendRule,
-    bool CarryForwardEnabled);
+    bool CarryForwardEnabled,
+    bool ShowOnDashboard);
+
+public sealed record CreatePotRequest(
+    string Name,
+    string Kind,
+    decimal PlannedAmount,
+    string Owner,
+    string OverspendRule,
+    bool CarryForwardEnabled,
+    bool ShowOnDashboard);
+
+public sealed record UpdatePotRequest(
+    decimal PlannedAmount,
+    bool ShowOnDashboard);
 
 public sealed record TransactionInboxItem(
     Guid Id,
@@ -34,6 +48,8 @@ public sealed record TransactionInboxItem(
     string AccountName,
     string Category,
     string FundingSource,
+    Guid? EventId,
+    string? EventName,
     string Owner,
     bool IsAcknowledged,
     bool RequiresPartnerReview,
@@ -57,6 +73,8 @@ public sealed record TransactionDetail(
     string ExternalTransactionId,
     string Category,
     string FundingSource,
+    Guid? EventId,
+    string? EventName,
     string Owner,
     bool IsAcknowledged,
     bool RequiresPartnerReview,
@@ -74,6 +92,7 @@ public sealed record CreateTransactionRequest(
     string ExternalTransactionId,
     string Category,
     string FundingSource,
+    Guid? EventId,
     string Owner,
     bool RequiresPartnerReview,
     bool IsAcknowledged,
@@ -85,6 +104,7 @@ public sealed record CreateTransactionRequest(
 public sealed record UpdateTransactionRequest(
     string Category,
     string FundingSource,
+    Guid? EventId,
     string Owner,
     bool IsSplit,
     bool RefundPending,
@@ -117,6 +137,8 @@ public sealed record EventSummary(
     string Name,
     string Type,
     string Status,
+    Guid? FundingPotId,
+    string? FundingPotName,
     DateOnly DueDate,
     DateOnly SpendWindowStart,
     DateOnly SpendWindowEnd,
@@ -137,6 +159,8 @@ public sealed record EventDetail(
     string Name,
     string Type,
     string Status,
+    Guid? FundingPotId,
+    string? FundingPotName,
     DateOnly DueDate,
     DateOnly SpendWindowStart,
     DateOnly SpendWindowEnd,
@@ -151,6 +175,7 @@ public sealed record CreateEventRequest(
     string Name,
     string Type,
     string Status,
+    Guid? FundingPotId,
     DateOnly DueDate,
     DateOnly SpendWindowStart,
     DateOnly SpendWindowEnd,
@@ -161,6 +186,7 @@ public sealed record CreateEventRequest(
 
 public sealed record UpdateEventRequest(
     string Status,
+    Guid? FundingPotId,
     decimal PlannedAmount,
     decimal FundedAmount,
     string Notes);

@@ -16,6 +16,8 @@ export const colors = {
 };
 
 export const potAccentMap: Record<string, string> = {
+  'big-pot': colors.teal,
+  'little-pot': colors.amber,
   'household-budget': colors.amber,
   'sinking-fund': colors.teal,
   'personal-budget': colors.blue,

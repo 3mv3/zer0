@@ -4,13 +4,34 @@ import { Platform } from 'react-native';
 export type Pot = {
   id: string;
   name: string;
-  type: string;
+  kind: 'big-pot' | 'little-pot';
   plannedAmount: number;
   actualAmount: number;
   remainingAmount: number;
   owner: string;
   overspendRule: string;
   carryForwardEnabled: boolean;
+  showOnDashboard: boolean;
+};
+
+export type PotsResponse = {
+  count: number;
+  items: Pot[];
+};
+
+export type CreatePotRequest = {
+  name: string;
+  kind: 'big-pot' | 'little-pot';
+  plannedAmount: number;
+  owner: string;
+  overspendRule: string;
+  carryForwardEnabled: boolean;
+  showOnDashboard: boolean;
+};
+
+export type UpdatePotRequest = {
+  plannedAmount: number;
+  showOnDashboard: boolean;
 };
 
 export type OverviewResponse = {
@@ -47,6 +68,8 @@ export type TransactionInboxItem = {
   accountName: string;
   category: string;
   fundingSource: string;
+  eventId?: string | null;
+  eventName?: string | null;
   owner: string;
   isAcknowledged: boolean;
   requiresPartnerReview: boolean;
@@ -78,6 +101,8 @@ export type TransactionDetail = {
   externalTransactionId: string;
   category: string;
   fundingSource: string;
+  eventId?: string | null;
+  eventName?: string | null;
   owner: string;
   isAcknowledged: boolean;
   requiresPartnerReview: boolean;
@@ -96,6 +121,7 @@ export type CreateTransactionRequest = {
   externalTransactionId: string;
   category: string;
   fundingSource: string;
+  eventId?: string | null;
   owner: string;
   requiresPartnerReview: boolean;
   isAcknowledged: boolean;
@@ -113,6 +139,7 @@ export type CreateTransactionRequest = {
 export type TransactionUpdateRequest = {
   category: string;
   fundingSource: string;
+  eventId?: string | null;
   owner: string;
   isSplit: boolean;
   refundPending: boolean;
@@ -151,6 +178,8 @@ export type EventSummary = {
   name: string;
   type: string;
   status: string;
+  fundingPotId?: string | null;
+  fundingPotName?: string | null;
   dueDate: string;
   spendWindowStart: string;
   spendWindowEnd: string;
@@ -185,6 +214,8 @@ export type EventDetail = {
   name: string;
   type: string;
   status: string;
+  fundingPotId?: string | null;
+  fundingPotName?: string | null;
   dueDate: string;
   spendWindowStart: string;
   spendWindowEnd: string;
@@ -206,6 +237,7 @@ export type CreateEventRequest = {
   name: string;
   type: string;
   status: string;
+  fundingPotId?: string | null;
   dueDate: string;
   spendWindowStart: string;
   spendWindowEnd: string;
@@ -217,9 +249,20 @@ export type CreateEventRequest = {
 
 export type UpdateEventRequest = {
   status: string;
+  fundingPotId?: string | null;
   plannedAmount: number;
   fundedAmount: number;
   notes: string;
+};
+
+export type TransactionFormOptions = {
+  accountNames: string[];
+  categories: string[];
+  fundingSources: string[];
+  fundingSourceKinds: Record<string, Pot['kind']>;
+  fundingSourcePotIds: Record<string, string>;
+  owners: string[];
+  sourceProviders: string[];
 };
 
 export const apiBaseUrl = Platform.select({
@@ -239,6 +282,10 @@ async function getJson<T>(path: string): Promise<T> {
 
 export function getOverview() {
   return getJson<OverviewResponse>('/api/household/overview');
+}
+
+export function getPots() {
+  return getJson<PotsResponse>('/api/pots');
 }
 
 export function getInbox() {
@@ -287,8 +334,9 @@ export function getObligations() {
   return getJson<ObligationsResponse>('/api/obligations/active');
 }
 
-export function getEvents() {
-  return getJson<EventsResponse>('/api/events');
+export function getEvents(fundingPotId?: string | null) {
+  const query = fundingPotId ? `?fundingPotId=${encodeURIComponent(fundingPotId)}` : '';
+  return getJson<EventsResponse>(`/api/events${query}`);
 }
 
 export async function createEvent(request: CreateEventRequest) {
@@ -316,6 +364,40 @@ export function getAuditEntries() {
   return getJson<AuditResponse>('/api/audit');
 }
 
+export async function createPot(request: CreatePotRequest) {
+  const response = await fetch(`${apiBaseUrl}/api/pots`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json()) as { message?: string };
+    throw new Error(payload.message ?? 'Unable to create pot.');
+  }
+
+  return (await response.json()) as Pot;
+}
+
+export async function updatePot(potId: string, request: UpdatePotRequest) {
+  const response = await fetch(`${apiBaseUrl}/api/pots/${potId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json()) as { message?: string };
+    throw new Error(payload.message ?? 'Unable to update pot.');
+  }
+
+  return (await response.json()) as Pot;
+}
+
 export async function updateEvent(eventId: string, request: UpdateEventRequest) {
   const response = await fetch(`${apiBaseUrl}/api/events/${eventId}`, {
     method: 'PUT',
@@ -331,4 +413,72 @@ export async function updateEvent(eventId: string, request: UpdateEventRequest) 
   }
 
   return (await response.json()) as EventDetail;
+}
+
+const defaultTransactionCategories = [
+  'Unassigned',
+  'Groceries',
+  'Dining',
+  'Transport',
+  'Household',
+  'Subscriptions',
+  'Health',
+  'Gifts',
+  'Travel',
+  'Utilities',
+];
+
+function uniqueSorted(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+export function buildTransactionFormOptions(input: {
+  overview?: OverviewResponse | null;
+  inbox?: InboxResponse | null;
+  detail?: TransactionDetail | null;
+}): TransactionFormOptions {
+  const inboxItems = input.inbox?.items ?? [];
+  const detailSplits = input.detail?.splits ?? [];
+  const household = input.overview?.household;
+  const pots = input.overview?.pots ?? [];
+
+  return {
+    accountNames: uniqueSorted([
+      'Joint',
+      ...(input.overview?.accounts ?? []).map((account) => account.name),
+      ...inboxItems.map((item) => item.accountName),
+      input.detail?.accountName,
+    ]),
+    categories: uniqueSorted([
+      ...defaultTransactionCategories,
+      ...inboxItems.map((item) => item.category),
+      ...detailSplits.map((split) => split.category),
+      input.detail?.category,
+    ]),
+    fundingSources: uniqueSorted([
+      ...pots.map((pot) => pot.name),
+      ...detailSplits.map((split) => split.fundingSource),
+      input.detail?.fundingSource,
+    ]),
+    fundingSourceKinds: Object.fromEntries(pots.map((pot) => [pot.name, pot.kind])),
+    fundingSourcePotIds: Object.fromEntries(pots.map((pot) => [pot.name, pot.id])),
+    owners: uniqueSorted([
+      'Household',
+      household?.ownerName,
+      household?.partnerName,
+      ...inboxItems.map((item) => item.owner),
+      input.detail?.owner,
+    ]),
+    sourceProviders: uniqueSorted([
+      'manual',
+      ...inboxItems.map(() => 'manual'),
+      input.detail?.sourceProvider,
+    ]),
+  };
 }

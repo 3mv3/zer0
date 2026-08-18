@@ -4,14 +4,18 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppShell, Hero, SectionHeading, SurfaceCard } from '../../src/components/layout';
+import { OptionSelect, OptionSelectItem } from '../../src/components/option-select';
 import { ErrorBanner, LoadingState } from '../../src/components/status';
-import { EventDetail, getEvent, updateEvent } from '../../src/lib/api';
+import { EventDetail, getEvent, getPots, updateEvent } from '../../src/lib/api';
 import { formatCurrency } from '../../src/lib/format';
 import { triggerRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
+const noFundingPotValue = '__none__';
+
 type EditorState = {
   status: string;
+  fundingPotId: string;
   plannedAmount: string;
   fundedAmount: string;
   notes: string;
@@ -20,6 +24,7 @@ type EditorState = {
 function toEditor(item: EventDetail): EditorState {
   return {
     status: item.status,
+    fundingPotId: item.fundingPotId ?? noFundingPotValue,
     plannedAmount: item.plannedAmount.toFixed(2),
     fundedAmount: item.fundedAmount.toFixed(2),
     notes: item.notes,
@@ -30,6 +35,7 @@ export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [detail, setDetail] = useState<EventDetail | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [bigPotOptions, setBigPotOptions] = useState<OptionSelectItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -42,7 +48,10 @@ export default function EventDetailScreen() {
     try {
       setIsLoading(true);
       setErrorMessage(null);
-      const payload = await getEvent(id);
+      const [payload, pots] = await Promise.all([getEvent(id), getPots()]);
+      setBigPotOptions(pots.items
+        .filter((pot) => pot.kind === 'big-pot')
+        .map((pot) => ({ label: pot.name, value: pot.id })));
       setDetail(payload);
       setEditor(toEditor(payload));
     } catch (error) {
@@ -62,6 +71,7 @@ export default function EventDetailScreen() {
       setErrorMessage(null);
       const payload = await updateEvent(id, {
         status: editor.status,
+        fundingPotId: editor.fundingPotId === noFundingPotValue ? null : editor.fundingPotId,
         plannedAmount: Number(editor.plannedAmount || '0'),
         fundedAmount: Number(editor.fundedAmount || '0'),
         notes: editor.notes,
@@ -96,6 +106,7 @@ export default function EventDetailScreen() {
       <SectionHeading eyebrow="Summary" title={`${detail.type} · ${detail.status}`} />
       <SurfaceCard>
         <Text style={styles.meta}>Due {detail.dueDate} · spend window {detail.spendWindowStart} to {detail.spendWindowEnd}</Text>
+        <Text style={styles.meta}>Big pot {detail.fundingPotName ?? 'not linked'}</Text>
         <View style={styles.metricRow}>
           <Metric label="planned" value={formatCurrency(detail.plannedAmount)} />
           <Metric label="funded" value={formatCurrency(detail.fundedAmount)} />
@@ -107,12 +118,19 @@ export default function EventDetailScreen() {
       <SurfaceCard>
         <Text style={styles.label}>Status</Text>
         <TextInput style={styles.input} value={editor.status} onChangeText={(value) => setEditor((current) => current ? { ...current, status: value } : current)} />
+        <OptionSelect
+          label="Big pot"
+          value={editor.fundingPotId}
+          options={[{ label: 'No linked big pot', value: noFundingPotValue } as OptionSelectItem, ...bigPotOptions]}
+          onChange={(value) => setEditor((current) => current ? { ...current, fundingPotId: value } : current)}
+        />
         <Text style={styles.label}>Planned amount</Text>
         <TextInput style={styles.input} keyboardType="decimal-pad" value={editor.plannedAmount} onChangeText={(value) => setEditor((current) => current ? { ...current, plannedAmount: value } : current)} />
         <Text style={styles.label}>Funded amount</Text>
         <TextInput style={styles.input} keyboardType="decimal-pad" value={editor.fundedAmount} onChangeText={(value) => setEditor((current) => current ? { ...current, fundedAmount: value } : current)} />
         <Text style={styles.label}>Notes</Text>
         <TextInput style={styles.notes} multiline value={editor.notes} onChangeText={(value) => setEditor((current) => current ? { ...current, notes: value } : current)} />
+        <Text style={styles.meta}>Only events linked to a big pot will appear when that same big pot funds a transaction.</Text>
         <Pressable style={styles.primaryButton} onPress={save} disabled={isSaving}>
           <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : 'Save event'}</Text>
         </Pressable>

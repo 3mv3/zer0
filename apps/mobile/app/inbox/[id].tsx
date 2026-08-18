@@ -1,18 +1,24 @@
 // RF-SMART Elevate owns this file
+import { router } from 'expo-router';
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { AppShell, Hero, SectionHeading, SurfaceCard } from '../../src/components/layout';
+import { OptionSelect, OptionSelectItem } from '../../src/components/option-select';
 import { ErrorBanner, LoadingState } from '../../src/components/status';
-import { getTransaction, TransactionDetail, TransactionUpdateRequest, updateTransaction } from '../../src/lib/api';
+import { buildTransactionFormOptions, getEvents, getInbox, getOverview, getTransaction, TransactionDetail, TransactionFormOptions, TransactionUpdateRequest, updateTransaction } from '../../src/lib/api';
 import { formatCurrency } from '../../src/lib/format';
 import { triggerRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
 
+const splitParentValue = 'Split';
+const noLinkedEventValue = '__none__';
+
 type EditorState = {
   category: string;
   fundingSource: string;
+  eventId: string;
   owner: string;
   notes: string;
   isAcknowledged: boolean;
@@ -40,8 +46,9 @@ function createLocalSplit(defaults?: Partial<EditorState['splits'][number]>) {
 
 function toEditor(detail: TransactionDetail): EditorState {
   return {
-    category: detail.category,
-    fundingSource: detail.fundingSource,
+    category: detail.isSplit ? splitParentValue : detail.category,
+    fundingSource: detail.isSplit ? splitParentValue : detail.fundingSource,
+    eventId: detail.eventId ?? noLinkedEventValue,
     owner: detail.owner,
     notes: detail.notes,
     isAcknowledged: detail.isAcknowledged,
@@ -57,10 +64,27 @@ function toEditor(detail: TransactionDetail): EditorState {
   };
 }
 
+function getParentValueForUnsplit(currentValue: string, fallbackValue: string, options: string[]) {
+  if (currentValue && currentValue !== splitParentValue) {
+    return currentValue;
+  }
+
+  if (fallbackValue && fallbackValue !== splitParentValue) {
+    return fallbackValue;
+  }
+
+  return options.find((option) => option !== splitParentValue) ?? currentValue;
+}
+
+function isBigPotFundingSource(fundingSource: string, isSplit: boolean, options: TransactionFormOptions) {
+  return !isSplit && options.fundingSourceKinds[fundingSource] === 'big-pot';
+}
+
 function toRequest(editor: EditorState): TransactionUpdateRequest {
   return {
     category: editor.category,
     fundingSource: editor.fundingSource,
+    eventId: editor.eventId === noLinkedEventValue ? null : editor.eventId,
     owner: editor.owner,
     isSplit: editor.isSplit,
     refundPending: editor.refundPending,
@@ -81,9 +105,14 @@ export default function TransactionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [detail, setDetail] = useState<TransactionDetail | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [options, setOptions] = useState<TransactionFormOptions>(() => buildTransactionFormOptions({}));
+  const [eventOptions, setEventOptions] = useState<OptionSelectItem[]>([]);
+  const [isLoadingEventOptions, setIsLoadingEventOptions] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const shouldShowLinkedEvent = editor ? isBigPotFundingSource(editor.fundingSource, editor.isSplit, options) : false;
+  const selectedFundingPotId = editor ? options.fundingSourcePotIds[editor.fundingSource] : undefined;
 
   async function load() {
     if (!id) {
@@ -93,7 +122,8 @@ export default function TransactionDetailScreen() {
     try {
       setIsLoading(true);
       setErrorMessage(null);
-      const payload = await getTransaction(id);
+      const [payload, overview, inbox] = await Promise.all([getTransaction(id), getOverview(), getInbox()]);
+      setOptions(buildTransactionFormOptions({ overview, inbox, detail: payload }));
       setDetail(payload);
       setEditor(toEditor(payload));
     } catch (error) {
@@ -102,6 +132,61 @@ export default function TransactionDetailScreen() {
       setIsLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    if (!shouldShowLinkedEvent || !selectedFundingPotId) {
+      setEventOptions([]);
+      setIsLoadingEventOptions(false);
+      setEditor((current) => current && current.eventId !== noLinkedEventValue ? { ...current, eventId: noLinkedEventValue } : current);
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function loadEventOptions() {
+      try {
+        setIsLoadingEventOptions(true);
+        const payload = await getEvents(selectedFundingPotId);
+
+        if (isCancelled) {
+          return;
+        }
+
+        const nextEventOptions = payload.items.map((event) => ({ label: event.name, value: event.id }));
+        setEventOptions(nextEventOptions);
+        setEditor((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const hasSelectedEvent = current.eventId !== noLinkedEventValue
+            && nextEventOptions.some((option) => option.value === current.eventId);
+
+          return hasSelectedEvent ? current : { ...current, eventId: noLinkedEventValue };
+        });
+      } catch (error) {
+        if (!isCancelled) {
+          setEventOptions([]);
+          setEditor((current) => current && current.eventId !== noLinkedEventValue ? { ...current, eventId: noLinkedEventValue } : current);
+          setErrorMessage(error instanceof Error ? error.message : 'Unexpected linked event load failure.');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingEventOptions(false);
+        }
+      }
+    }
+
+    void loadEventOptions();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [editor?.fundingSource, editor?.isSplit, selectedFundingPotId, shouldShowLinkedEvent]);
 
   async function save() {
     if (!id || !editor) {
@@ -117,6 +202,7 @@ export default function TransactionDetailScreen() {
       triggerRouteRefresh('inbox');
       triggerRouteRefresh('dashboard');
       triggerRouteRefresh('audit');
+      router.replace(`/inbox`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unexpected transaction save failure.');
     } finally {
@@ -147,23 +233,36 @@ export default function TransactionDetailScreen() {
             <Text style={styles.sourceText}>provider {detail.sourceProvider || 'manual'} · ref {detail.externalTransactionId || 'n/a'}</Text>
           </View>
         ) : null}
+        {shouldShowLinkedEvent ? (
+          <OptionSelect
+            label="Linked event"
+            value={editor.eventId}
+            options={[{ label: 'No linked event', value: noLinkedEventValue } as OptionSelectItem, ...eventOptions]}
+            onChange={(value) => setEditor((current) => current ? { ...current, eventId: value } : current)}
+            placeholder={isLoadingEventOptions ? 'Loading events...' : 'Select an event'}
+            disabled={isLoadingEventOptions}
+          />
+        ) : null}
         <View style={styles.formRow}>
           <View style={styles.field}>
-            <Text style={styles.label}>Category</Text>
-            <TextInput style={styles.input} value={editor.category} onChangeText={(value) => setEditor((current) => current ? { ...current, category: value } : current)} />
+            <OptionSelect label="Category" value={editor.category} options={options.categories} onChange={(value) => setEditor((current) => current ? { ...current, category: value } : current)} disabled={editor.isSplit} />
           </View>
           <View style={styles.field}>
-            <Text style={styles.label}>Funding source</Text>
-            <TextInput style={styles.input} value={editor.fundingSource} onChangeText={(value) => setEditor((current) => current ? { ...current, fundingSource: value } : current)} />
+            <OptionSelect label="Funding source" value={editor.fundingSource} options={options.fundingSources} onChange={(value) => setEditor((current) => current ? { ...current, fundingSource: value } : current)} disabled={editor.isSplit} />
           </View>
         </View>
         <View style={styles.field}>
-          <Text style={styles.label}>Owner</Text>
-          <TextInput style={styles.input} value={editor.owner} onChangeText={(value) => setEditor((current) => current ? { ...current, owner: value } : current)} />
+          <OptionSelect label="Owner" value={editor.owner} options={options.owners} onChange={(value) => setEditor((current) => current ? { ...current, owner: value } : current)} />
         </View>
         <View style={styles.toggleRow}><Text style={styles.label}>Acknowledged</Text><Switch value={editor.isAcknowledged} onValueChange={(value) => setEditor((current) => current ? { ...current, isAcknowledged: value } : current)} /></View>
         <View style={styles.toggleRow}><Text style={styles.label}>Split transaction</Text><Switch value={editor.isSplit} onValueChange={(value) => setEditor((current) => current ? {
           ...current,
+          category: value
+            ? splitParentValue
+            : getParentValueForUnsplit(current.category, current.splits[0]?.category ?? '', options.categories),
+          fundingSource: value
+            ? splitParentValue
+            : getParentValueForUnsplit(current.fundingSource, current.splits[0]?.fundingSource ?? '', options.fundingSources),
           isSplit: value,
           splits: value && current.splits.length === 0
             ? [createLocalSplit({ category: current.category, fundingSource: current.fundingSource, amountText: detail.amount.toFixed(2), notes: current.notes })]
@@ -180,8 +279,8 @@ export default function TransactionDetailScreen() {
             <Text style={styles.label}>Split lines</Text>
             {editor.splits.map((split) => (
               <View key={split.id} style={styles.splitCard}>
-                <TextInput style={styles.input} value={split.category} onChangeText={(value) => setEditor((current) => current ? { ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, category: value } : item) } : current)} />
-                <TextInput style={styles.input} value={split.fundingSource} onChangeText={(value) => setEditor((current) => current ? { ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, fundingSource: value } : item) } : current)} />
+                <OptionSelect label="Category" value={split.category} options={options.categories} onChange={(value) => setEditor((current) => current ? { ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, category: value } : item) } : current)} placeholder="Select category" />
+                <OptionSelect label="Funding source" value={split.fundingSource} options={options.fundingSources} onChange={(value) => setEditor((current) => current ? { ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, fundingSource: value } : item) } : current)} placeholder="Select funding source" />
                 <TextInput style={styles.input} keyboardType="decimal-pad" value={split.amountText} onChangeText={(value) => setEditor((current) => current ? { ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, amountText: value } : item) } : current)} />
                 <TextInput style={styles.input} value={split.notes} onChangeText={(value) => setEditor((current) => current ? { ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, notes: value } : item) } : current)} />
                 <Pressable style={styles.removeButton} onPress={() => setEditor((current) => current ? { ...current, splits: current.splits.length > 1 ? current.splits.filter((item) => item.id !== split.id) : current.splits } : current)}>
@@ -205,7 +304,7 @@ export default function TransactionDetailScreen() {
 
 const styles = StyleSheet.create({
   formRow: { flexDirection: 'row', gap: 12 },
-  field: { flex: 1, gap: 8 },
+  field: { flex: 1 },
   sourceCard: { padding: 12, borderRadius: 14, backgroundColor: '#F2E9D8' },
   sourceText: { color: '#694812', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.7, fontWeight: '700' },
   label: { color: colors.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' },

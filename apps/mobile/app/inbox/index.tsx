@@ -30,23 +30,28 @@ export default function InboxScreen() {
   useRouteRefresh('inbox', load);
 
   if (isLoading && !inbox) {
-    return <LoadingState message="Loading inbox..." />;
+    return <LoadingState message="Loading transactions..." />;
   }
+
+  const actionableItems = (inbox?.items ?? []).filter((item) => !item.isAcknowledged);
+  const historicalItems = (inbox?.items ?? []).filter((item) => item.isAcknowledged);
 
   return (
     <AppShell>
-      <Hero title="Transaction Inbox" subtitle="Every imported transaction must be reviewed, funded, and acknowledged." />
+      <Hero title="Transactions" subtitle="Action the transactions that still need decisions, then refer back to the acknowledged history below." />
       {errorMessage ? <ErrorBanner message={errorMessage} onRetry={load} /> : null}
       <View style={styles.actions}>
         <Link href="/inbox/new" asChild>
           <Pressable style={styles.primaryButton}>
-            <Text style={styles.primaryButtonText}>Import transaction</Text>
+            <Text style={styles.primaryButtonText}>Add transaction</Text>
           </Pressable>
         </Link>
       </View>
-      <SectionHeading eyebrow="Queue" title={`${inbox?.pending ?? 0} items still need action`} />
+      <SectionHeading eyebrow="Needs Action" title={`${actionableItems.length} transactions still need action`} />
       <SurfaceCard>
-        {(inbox?.items ?? []).map((item) => (
+        {actionableItems.length === 0 ? (
+          <Text style={styles.emptyCopy}>Everything is acknowledged right now.</Text>
+        ) : actionableItems.map((item) => (
           <Link key={item.id} href={`/inbox/${item.id}`} asChild>
             <Pressable style={styles.row}>
               <View style={styles.copy}>
@@ -57,9 +62,31 @@ export default function InboxScreen() {
               </View>
               <View style={styles.right}>
                 <Text style={styles.amount}>{formatCurrency(item.amount)}</Text>
-                <Text style={item.isAcknowledged ? styles.good : styles.alert}>
-                  {item.isAcknowledged ? 'acknowledged' : 'needs review'}
+                <Text style={item.requiresPartnerReview ? styles.warn : styles.alert}>
+                  {item.requiresPartnerReview ? 'partner review' : 'needs review'}
                 </Text>
+              </View>
+            </Pressable>
+          </Link>
+        ))}
+      </SurfaceCard>
+
+      <SectionHeading eyebrow="History" title={`${historicalItems.length} acknowledged transactions`} />
+      <SurfaceCard>
+        {historicalItems.length === 0 ? (
+          <Text style={styles.emptyCopy}>Acknowledged transactions will collect here once they are actioned.</Text>
+        ) : historicalItems.map((item) => (
+          <Link key={item.id} href={`/inbox/${item.id}`} asChild>
+            <Pressable style={styles.row}>
+              <View style={styles.copy}>
+                <Text style={styles.title}>{item.merchant}</Text>
+                <Text style={styles.meta}>
+                  {item.accountName} · {item.category} · owner {item.owner}
+                </Text>
+              </View>
+              <View style={styles.right}>
+                <Text style={styles.amount}>{formatCurrency(item.amount)}</Text>
+                <Text style={styles.good}>acknowledged</Text>
               </View>
             </Pressable>
           </Link>
@@ -123,5 +150,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
+  },
+  warn: {
+    color: colors.amber,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  emptyCopy: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20,
   },
 });

@@ -1,13 +1,17 @@
 // RF-SMART Elevate owns this file
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { AppShell, Hero, SectionHeading, SurfaceCard } from '../../src/components/layout';
+import { OptionSelect, OptionSelectItem } from '../../src/components/option-select';
 import { ErrorBanner } from '../../src/components/status';
-import { createTransaction } from '../../src/lib/api';
+import { buildTransactionFormOptions, createTransaction, getEvents, getInbox, getOverview, TransactionFormOptions } from '../../src/lib/api';
 import { triggerRouteRefresh } from '../../src/lib/route-refresh';
 import { colors } from '../../src/lib/theme';
+
+const splitParentValue = 'Split';
+const noLinkedEventValue = '__none__';
 
 type SplitEditor = {
   id: string;
@@ -26,6 +30,7 @@ type EditorState = {
   externalTransactionId: string;
   category: string;
   fundingSource: string;
+  eventId: string;
   owner: string;
   requiresPartnerReview: boolean;
   isAcknowledged: boolean;
@@ -50,7 +55,26 @@ function getToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function getParentValueForUnsplit(currentValue: string, fallbackValue: string, options: string[]) {
+  if (currentValue && currentValue !== splitParentValue) {
+    return currentValue;
+  }
+
+  if (fallbackValue && fallbackValue !== splitParentValue) {
+    return fallbackValue;
+  }
+
+  return options.find((option) => option !== splitParentValue) ?? currentValue;
+}
+
+function isBigPotFundingSource(fundingSource: string, isSplit: boolean, options: TransactionFormOptions) {
+  return !isSplit && options.fundingSourceKinds[fundingSource] === 'big-pot';
+}
+
 export default function NewTransactionScreen() {
+  const [options, setOptions] = useState<TransactionFormOptions>(() => buildTransactionFormOptions({}));
+  const [eventOptions, setEventOptions] = useState<OptionSelectItem[]>([]);
+  const [isLoadingEventOptions, setIsLoadingEventOptions] = useState(false);
   const [editor, setEditor] = useState<EditorState>({
     accountName: 'Joint',
     merchant: '',
@@ -60,6 +84,7 @@ export default function NewTransactionScreen() {
     externalTransactionId: '',
     category: 'Unassigned',
     fundingSource: 'Food',
+    eventId: noLinkedEventValue,
     owner: 'Household',
     requiresPartnerReview: false,
     isAcknowledged: false,
@@ -70,6 +95,77 @@ export default function NewTransactionScreen() {
   });
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const shouldShowLinkedEvent = isBigPotFundingSource(editor.fundingSource, editor.isSplit, options);
+  const selectedFundingPotId = options.fundingSourcePotIds[editor.fundingSource];
+
+  useEffect(() => {
+    async function loadReferenceData() {
+      try {
+        const [overview, inbox] = await Promise.all([getOverview(), getInbox()]);
+        const nextOptions = buildTransactionFormOptions({ overview, inbox });
+        setOptions(nextOptions);
+        setEditor((current) => ({
+          ...current,
+          accountName: nextOptions.accountNames.includes(current.accountName) ? current.accountName : nextOptions.accountNames[0] ?? current.accountName,
+          category: nextOptions.categories.includes(current.category) ? current.category : nextOptions.categories[0] ?? current.category,
+          fundingSource: nextOptions.fundingSources.includes(current.fundingSource) ? current.fundingSource : nextOptions.fundingSources[0] ?? current.fundingSource,
+          owner: nextOptions.owners.includes(current.owner) ? current.owner : nextOptions.owners[0] ?? current.owner,
+          sourceProvider: nextOptions.sourceProviders.includes(current.sourceProvider) ? current.sourceProvider : nextOptions.sourceProviders[0] ?? current.sourceProvider,
+        }));
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Unexpected transaction reference load failure.');
+      }
+    }
+
+    void loadReferenceData();
+  }, []);
+
+  useEffect(() => {
+    if (!shouldShowLinkedEvent || !selectedFundingPotId) {
+      setEventOptions([]);
+      setIsLoadingEventOptions(false);
+      setEditor((current) => current.eventId === noLinkedEventValue ? current : { ...current, eventId: noLinkedEventValue });
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function loadEventOptions() {
+      try {
+        setIsLoadingEventOptions(true);
+        const payload = await getEvents(selectedFundingPotId);
+
+        if (isCancelled) {
+          return;
+        }
+
+        const nextEventOptions = payload.items.map((event) => ({ label: event.name, value: event.id }));
+        setEventOptions(nextEventOptions);
+        setEditor((current) => {
+          const hasSelectedEvent = current.eventId !== noLinkedEventValue
+            && nextEventOptions.some((option) => option.value === current.eventId);
+
+          return hasSelectedEvent ? current : { ...current, eventId: noLinkedEventValue };
+        });
+      } catch (error) {
+        if (!isCancelled) {
+          setEventOptions([]);
+          setEditor((current) => current.eventId === noLinkedEventValue ? current : { ...current, eventId: noLinkedEventValue });
+          setErrorMessage(error instanceof Error ? error.message : 'Unexpected linked event load failure.');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingEventOptions(false);
+        }
+      }
+    }
+
+    void loadEventOptions();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedFundingPotId, shouldShowLinkedEvent]);
 
   async function save() {
     try {
@@ -85,6 +181,7 @@ export default function NewTransactionScreen() {
         externalTransactionId: editor.externalTransactionId,
         category: editor.category,
         fundingSource: editor.fundingSource,
+        eventId: editor.eventId === noLinkedEventValue ? null : editor.eventId,
         owner: editor.owner,
         requiresPartnerReview: editor.requiresPartnerReview,
         isAcknowledged: editor.isAcknowledged,
@@ -104,7 +201,7 @@ export default function NewTransactionScreen() {
       triggerRouteRefresh('inbox');
       triggerRouteRefresh('dashboard');
       triggerRouteRefresh('audit');
-      router.replace(`/inbox/${payload.id}`);
+      router.replace(`/inbox`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unexpected transaction create failure.');
     } finally {
@@ -114,10 +211,20 @@ export default function NewTransactionScreen() {
 
   return (
     <AppShell>
-      <Hero title="Import Transaction" subtitle="Seed the inbox with a provider-shaped transaction even before real bank sync arrives in Phase 3." />
+      <Hero title="Add Transaction" subtitle="Capture a transaction, route it to the right pot, and leave split lines hidden unless you explicitly need them." />
       {errorMessage ? <ErrorBanner message={errorMessage} onRetry={save} /> : null}
-      <SectionHeading eyebrow="New import" title="Create inbox pressure" />
+      <SectionHeading eyebrow="New transaction" title="Capture transaction details" />
       <SurfaceCard>
+        {shouldShowLinkedEvent ? (
+          <OptionSelect
+            label="Linked event"
+            value={editor.eventId}
+            options={[{ label: 'No linked event', value: noLinkedEventValue } as OptionSelectItem, ...eventOptions]}
+            onChange={(value) => setEditor((current) => ({ ...current, eventId: value }))}
+            placeholder={isLoadingEventOptions ? 'Loading events...' : 'Select an event'}
+            disabled={isLoadingEventOptions}
+          />
+        ) : null}
         <Text style={styles.label}>Merchant</Text>
         <TextInput style={styles.input} value={editor.merchant} onChangeText={(value) => setEditor((current) => ({ ...current, merchant: value }))} />
         <View style={styles.formRow}>
@@ -133,17 +240,15 @@ export default function NewTransactionScreen() {
         <View style={styles.formRow}>
           <View style={styles.field}>
             <Text style={styles.label}>Account</Text>
-            <TextInput style={styles.input} value={editor.accountName} onChangeText={(value) => setEditor((current) => ({ ...current, accountName: value }))} />
+            <OptionSelect label="Account" value={editor.accountName} options={options.accountNames} onChange={(value) => setEditor((current) => ({ ...current, accountName: value }))} />
           </View>
           <View style={styles.field}>
-            <Text style={styles.label}>Owner</Text>
-            <TextInput style={styles.input} value={editor.owner} onChangeText={(value) => setEditor((current) => ({ ...current, owner: value }))} />
+            <OptionSelect label="Owner" value={editor.owner} options={options.owners} onChange={(value) => setEditor((current) => ({ ...current, owner: value }))} />
           </View>
         </View>
         <View style={styles.formRow}>
           <View style={styles.field}>
-            <Text style={styles.label}>Source provider</Text>
-            <TextInput style={styles.input} value={editor.sourceProvider} onChangeText={(value) => setEditor((current) => ({ ...current, sourceProvider: value }))} />
+            <OptionSelect label="Source provider" value={editor.sourceProvider} options={options.sourceProviders} onChange={(value) => setEditor((current) => ({ ...current, sourceProvider: value }))} />
           </View>
           <View style={styles.field}>
             <Text style={styles.label}>External id</Text>
@@ -152,18 +257,22 @@ export default function NewTransactionScreen() {
         </View>
         <View style={styles.formRow}>
           <View style={styles.field}>
-            <Text style={styles.label}>Category</Text>
-            <TextInput style={styles.input} value={editor.category} onChangeText={(value) => setEditor((current) => ({ ...current, category: value }))} />
+            <OptionSelect label="Category" value={editor.category} options={options.categories} onChange={(value) => setEditor((current) => ({ ...current, category: value }))} disabled={editor.isSplit} />
           </View>
           <View style={styles.field}>
-            <Text style={styles.label}>Funding source</Text>
-            <TextInput style={styles.input} value={editor.fundingSource} onChangeText={(value) => setEditor((current) => ({ ...current, fundingSource: value }))} />
+            <OptionSelect label="Funding source" value={editor.fundingSource} options={options.fundingSources} onChange={(value) => setEditor((current) => ({ ...current, fundingSource: value }))} disabled={editor.isSplit} />
           </View>
         </View>
         <View style={styles.toggleRow}><Text style={styles.label}>Partner review</Text><Switch value={editor.requiresPartnerReview} onValueChange={(value) => setEditor((current) => ({ ...current, requiresPartnerReview: value }))} /></View>
         <View style={styles.toggleRow}><Text style={styles.label}>Acknowledged</Text><Switch value={editor.isAcknowledged} onValueChange={(value) => setEditor((current) => ({ ...current, isAcknowledged: value }))} /></View>
         <View style={styles.toggleRow}><Text style={styles.label}>Split transaction</Text><Switch value={editor.isSplit} onValueChange={(value) => setEditor((current) => ({
           ...current,
+          category: value
+            ? splitParentValue
+            : getParentValueForUnsplit(current.category, current.splits[0]?.category ?? '', options.categories),
+          fundingSource: value
+            ? splitParentValue
+            : getParentValueForUnsplit(current.fundingSource, current.splits[0]?.fundingSource ?? '', options.fundingSources),
           isSplit: value,
           splits: value && current.splits.length === 0
             ? [createLocalSplit({ category: current.category, fundingSource: current.fundingSource, amountText: current.amountText, notes: current.notes })]
@@ -178,8 +287,8 @@ export default function NewTransactionScreen() {
             <Text style={styles.label}>Split lines</Text>
             {editor.splits.map((split) => (
               <View key={split.id} style={styles.splitCard}>
-                <TextInput style={styles.input} value={split.category} onChangeText={(value) => setEditor((current) => ({ ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, category: value } : item) }))} placeholder="Category" placeholderTextColor={colors.muted} />
-                <TextInput style={styles.input} value={split.fundingSource} onChangeText={(value) => setEditor((current) => ({ ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, fundingSource: value } : item) }))} placeholder="Funding source" placeholderTextColor={colors.muted} />
+                <OptionSelect label="Category" value={split.category} options={options.categories} onChange={(value) => setEditor((current) => ({ ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, category: value } : item) }))} placeholder="Select category" />
+                <OptionSelect label="Funding source" value={split.fundingSource} options={options.fundingSources} onChange={(value) => setEditor((current) => ({ ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, fundingSource: value } : item) }))} placeholder="Select funding source" />
                 <TextInput style={styles.input} keyboardType="decimal-pad" value={split.amountText} onChangeText={(value) => setEditor((current) => ({ ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, amountText: value } : item) }))} placeholder="Amount" placeholderTextColor={colors.muted} />
                 <TextInput style={styles.input} value={split.notes} onChangeText={(value) => setEditor((current) => ({ ...current, splits: current.splits.map((item) => item.id === split.id ? { ...item, notes: value } : item) }))} placeholder="Notes" placeholderTextColor={colors.muted} />
                 <Pressable style={styles.removeButton} onPress={() => setEditor((current) => ({ ...current, splits: current.splits.length > 1 ? current.splits.filter((item) => item.id !== split.id) : current.splits }))}>
@@ -193,6 +302,8 @@ export default function NewTransactionScreen() {
         <View style={styles.actions}>
           <Pressable style={styles.secondaryButton} onPress={() => setEditor((current) => ({
             ...current,
+            category: splitParentValue,
+            fundingSource: splitParentValue,
             isSplit: true,
             splits: current.splits.length === 0
               ? [createLocalSplit({ category: current.category, fundingSource: current.fundingSource, amountText: current.amountText, notes: current.notes })]
@@ -211,7 +322,7 @@ export default function NewTransactionScreen() {
 
 const styles = StyleSheet.create({
   formRow: { flexDirection: 'row', gap: 12 },
-  field: { flex: 1, gap: 8 },
+  field: { flex: 1 },
   label: { color: colors.muted, fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' },
   input: { borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#FFFCF4', color: colors.text, fontSize: 15 },
   notes: { minHeight: 96, borderWidth: 1, borderColor: colors.inputBorder, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#FFFCF4', color: colors.text, fontSize: 15, textAlignVertical: 'top' },
